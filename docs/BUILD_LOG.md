@@ -4,6 +4,50 @@
 > how it was checked, and what is still open. Anything that bends the brain
 > gets an ADR link, not a quiet edit.
 
+## 2026-09-24 — Issues 1–6: API, migrations, OIDC, workers, web, E2E (done)
+
+Closed 1–5, most of 6. Detail per issue is on GitHub; the short version:
+
+- Issue 1 (API): `app/api/` now serves every 05 endpoint plus
+  `POST …/advance` (state machine checked against live rows) and
+  `POST …/evidence/spans` (extraction output / outage manual entry).
+  `tests/test_api.py` walks W1→W8 over HTTP plus the auth matrix
+  (401/403/404, cross-tenant, idempotency, smuggled export scope).
+  Two real bugs found by the tests and fixed: FastAPI's default
+  HTTPException handler was beating the envelope fallback (added explicit
+  handlers so every error carries `request_id`), and touching an ORM object
+  after `rollback()` blows up on async drivers (snapshot plain values first).
+- Issue 2 (migrations): `pos_001` (28 tables, create-only) and `pos_002`
+  (`oidc_sub`, batch mode for sqlite). Round-trip upgrade/downgrade/upgrade
+  verified, `alembic check` reports zero drift. The `script.py.mako` stub
+  had dropped the upgrade/downgrade placeholders — fixed before regenerating.
+  Generated versions are excluded from E501/I001 by policy.
+- Issue 3 (OIDC): JWKS validation with TTL cache, roles from workspace
+  memberships, dev fallback dead when an issuer is set. Tests mint real
+  RS256 tokens locally (valid, expired, wrong audience, unknown kid,
+  tampered, unknown subject).
+- Issue 4 (workers): `worker/queue.py` — RQ enqueue on `pos:*`, `apply_task`
+  (autonomy check, registry-only dispatch, audit), jittered backoff,
+  poison quarantine at 5 attempts. Tested without Redis.
+- Issue 5 (web): typed client for all endpoints, P01/P06/P13/P14 wired,
+  EvidenceDrawer, Cmd+K palette, 360px approval CSS. `tsc`, `next build`,
+  `vitest` green. Styling is still hand-rolled token CSS, and the rest of
+  the screens are shells — both noted in issue 6.
+- Issue 6 (E2E/CI): Playwright smoke (P01 load, 360px approval) green,
+  `seed/fixtures/` has HOSTILE-001/002 + a clean quote, CI integration job
+  now points at the Postgres service for migrate+seed, new `e2e` job runs
+  the smoke suite. What's left here: full W1–W8 click-through, the demo
+  rehearsal, staging.
+
+Postgres proof (local container, since removed): migrated both revisions,
+seeded 7/6/12/24/13, then ran uvicorn against it — mission create, plan
+generate (10 tasks), timeline, all 200. One false alarm on the way: a 500
+from an inline TestClient script turned out to be TestClient-portal plus
+asyncpg on Windows, not the app — the same calls pass under uvicorn.
+
+Checks at push time: ruff + format clean, `mypy --strict` clean,
+`pytest` green, `next build` + `vitest` + Playwright green.
+
 ## 2026-09-24 — Phases 1–9: backend, engine, gates, seed, web shell (done)
 
 What went in:

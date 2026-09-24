@@ -28,6 +28,8 @@ class User(TenantScoped):
     status: Mapped[str] = mapped_column(String(32), default="active")
     # Dev/test only: bearer token handle. Prod uses OIDC subjects.
     api_token: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    # Prod OIDC subject (globally unique per issuer); null until linked.
+    oidc_sub: Mapped[str | None] = mapped_column(String(256), nullable=True, unique=True)
 
     __table_args__ = (Index("ix_pos_user_tenant_email", "tenant_id", "email", unique=True),)
 

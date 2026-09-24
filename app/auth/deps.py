@@ -16,9 +16,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import roles as R
+from app.auth.oidc import AuthError, verify_bearer
 from app.core.config import settings
 from app.db import get_session
-from app.models.foundation import User
+from app.models.foundation import User, Workspace
 
 
 @dataclass
@@ -58,13 +59,44 @@ def _roles_for(user: User) -> list[str]:
     return [R.BUYER]
 
 
+async def _membership_roles(session: AsyncSession, user: User) -> list[str]:
+    """Union of lane roles from workspace memberships; Buyer default."""
+    q = await session.execute(select(Workspace).where(Workspace.tenant_id == user.tenant_id))
+    found: set[str] = set()
+    for ws in q.scalars().all():
+        for m in ws.members or []:
+            if m.get("user_id") == user.id:
+                found.update(m.get("roles", []))
+    return sorted(found) or [R.BUYER]
+
+
+async def _oidc_principal(authorization: str, session: AsyncSession) -> Principal:
+    scheme, _, token = authorization.partition(" ")
+    if scheme != "Bearer" or not token:
+        raise HTTPException(status_code=401, detail="Missing credentials")
+    try:
+        claims = verify_bearer(token.strip(), settings.oidc_issuer, settings.oidc_audience)
+    except AuthError as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e
+    sub = str(claims.get("sub", ""))
+    q = await session.execute(select(User).where(User.oidc_sub == sub))
+    user = q.scalar_one_or_none()
+    if user is None or user.status != "active":
+        raise HTTPException(status_code=401, detail="Unknown subject")
+    return Principal(
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        email=user.email,
+        roles=await _membership_roles(session, user),
+    )
+
+
 async def get_principal(
     authorization: str = Header(default=""),
     session: AsyncSession = Depends(get_session),
 ) -> Principal:
     if settings.oidc_issuer:
-        # Phase 10 hardens full JWKS validation; without it we fail closed.
-        raise HTTPException(status_code=401, detail="OIDC required")
+        return await _oidc_principal(authorization, session)
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing credentials")
     principal = await _dev_principal(authorization, session)

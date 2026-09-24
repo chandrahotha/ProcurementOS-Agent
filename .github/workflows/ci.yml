@@ -62,7 +62,11 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -e ".[dev]"
       - run: alembic upgrade head
+        env:
+          DATABASE_SYNC_URL: postgresql+psycopg://pos:pos@localhost:5432/pos
       - run: python seed/seed_pos.py --tenant SYN-TENANT-01
+        env:
+          DATABASE_URL: postgresql+asyncpg://pos:pos@localhost:5432/pos
       - run: pytest -q tests/golden
       - run: pytest -q
 
@@ -101,4 +105,20 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
       - run: npm ci --prefix web
+      - run: npm run typecheck --prefix web
+      - run: npm run test --prefix web
       - run: npm run build --prefix web
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci --prefix web
+      - run: npm run build --prefix web
+      - run: npx --prefix web playwright install chromium --only-shell
+      - run: npm run e2e --prefix web
+        env:
+          CI: "true"
