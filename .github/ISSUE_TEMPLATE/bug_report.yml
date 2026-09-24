@@ -1,0 +1,28 @@
+name: Bug report
+description: Something in the agent misbehaves
+labels: [bug]
+body:
+  - type: input
+    id: mission-state
+    attributes:
+      label: Mission state (if relevant)
+      description: e.g. evidence, approval — or n/a
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce (synthetic data only)
+      description: Steps, tenant code, request_ids if you have them
+  - type: checkboxes
+    id: gates
+    attributes:
+      label: Quick checks
+      options:
+        - label: No real supplier, price, or contract data is attached
+        - label: I checked this against prerequisite-docs before filing

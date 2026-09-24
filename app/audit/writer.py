@@ -1,0 +1,79 @@
+"""Append-only hash-chained audit writer (brain 03 §3, 08 T12)."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.foundation import AuditEvent
+
+
+def _canon(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def chain_hash(prev: str, payload: dict[str, Any]) -> str:
+    return hashlib.sha256(f"{prev}|{_canon(payload)}".encode()).hexdigest()
+
+
+def payload_hash(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(_canon(payload).encode()).hexdigest()
+
+
+async def append_event(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    action: str,
+    actor_id: str | None = None,
+    mission_id: str | None = None,
+    request_id: str = "",
+    object_type: str = "",
+    object_id: str | None = None,
+    before: dict[str, Any] | None = None,
+    after: dict[str, Any] | None = None,
+    reason: str | None = None,
+    source: str = "api",
+) -> AuditEvent:
+    # prev chain head: latest event_hash for tenant (fallback GENESIS)
+    hq = await session.execute(
+        select(AuditEvent.event_hash)
+        .where(AuditEvent.tenant_id == tenant_id)
+        .order_by(AuditEvent.created_at.desc())
+        .limit(1)
+    )
+    prev = hq.scalar_one_or_none() or "GENESIS"
+    before_h = payload_hash(before or {})
+    after_h = payload_hash(after or {})
+    body = {
+        "tenant": tenant_id,
+        "action": action,
+        "actor": actor_id,
+        "mission": mission_id,
+        "object": [object_type, object_id],
+        "before": before_h,
+        "after": after_h,
+        "request": request_id,
+    }
+    ev = AuditEvent(
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        mission_id=mission_id,
+        request_id=request_id,
+        object_type=object_type,
+        object_id=object_id,
+        action=action,
+        before_hash=before_h,
+        after_hash=after_h,
+        prev_hash=prev,
+        event_hash=chain_hash(prev, body),
+        reason=reason,
+        source=source,
+    )
+    session.add(ev)
+    await session.flush()
+    return ev

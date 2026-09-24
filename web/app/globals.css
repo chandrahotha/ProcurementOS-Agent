@@ -1,0 +1,40 @@
+/* ProcurementOS-Agent design tokens (prerequisite-docs/06 §2). Light + dark. */
+:root {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --text-2: #475569;
+  --accent: #4f46e5;
+  --accent-ink: #ffffff;
+  --ok: #15803d;
+  --warn: #b45309;
+  --danger: #b91c1c;
+  --agent: #6366f1;
+  --evidence: #0ea5e9;
+  --font-sans: Inter, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+}
+.dark {
+  --bg: #0b1220;
+  --surface: #111a2e;
+  --surface-2: #182642;
+  --border: #243354;
+  --text: #e6edf7;
+  --text-2: #9aa9c4;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+.density-comfortable table tr { height: 48px; }
+.density-compact table tr { height: 32px; }
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
