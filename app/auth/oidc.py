@@ -19,8 +19,9 @@ from jwt.algorithms import RSAAlgorithm
 from jwt.exceptions import DecodeError, ExpiredSignatureError, InvalidTokenError
 
 JWKS_TTL_S = 600
+NEG_TTL_S = 30  # negative cache: a down IdP is not re-fetched every request
 
-_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
 
 
 class AuthError(Exception):
@@ -28,6 +29,9 @@ class AuthError(Exception):
 
 
 def _get(url: str) -> dict[str, Any]:
+    # Scheme allowlist: identity metadata is http(s) only, never file/other.
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise AuthError(f"identity metadata scheme not allowed: {url.split(':', 1)[0]!r}")
     try:
         r = httpx.get(url, timeout=10)
         r.raise_for_status()
@@ -40,17 +44,27 @@ def jwks_for(issuer: str) -> dict[str, Any]:
     now = time.time()
     hit = _cache.get(issuer)
     if hit and hit[0] > now:
+        if hit[1] is None:
+            raise AuthError("identity metadata unreachable (recent failure)")
         return hit[1]
-    conf = _get(issuer.rstrip("/") + "/.well-known/openid-configuration")
-    uri = conf.get("jwks_uri")
-    if not uri:
-        raise AuthError("issuer metadata has no jwks_uri")
-    keys = _get(str(uri))
+    try:
+        conf = _get(issuer.rstrip("/") + "/.well-known/openid-configuration")
+        uri = conf.get("jwks_uri")
+        if not uri:
+            raise AuthError("issuer metadata has no jwks_uri")
+        keys = _get(str(uri))
+    except AuthError:
+        # Negative cache so an IdP outage fails fast instead of blocking
+        # twice per request for the full timeout.
+        _cache[issuer] = (now + NEG_TTL_S, None)
+        raise
     _cache[issuer] = (now + JWKS_TTL_S, keys)
     return keys
 
 
 def verify_bearer(token: str, issuer: str, audience: str) -> dict[str, Any]:
+    if not issuer or not audience:
+        raise AuthError("issuer/audience not configured")
     try:
         header = jwt.get_unverified_header(token)
     except DecodeError as e:
@@ -73,6 +87,7 @@ def verify_bearer(token: str, issuer: str, audience: str) -> dict[str, Any]:
             algorithms=["RS256"],
             audience=audience,
             issuer=issuer,
+            leeway=30,  # clock skew between issuer and API (B25)
         )
         return dict(claims)
     except ExpiredSignatureError as e:

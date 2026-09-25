@@ -7,10 +7,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.common import aud, err, log_timeline, must_mission, not_found, rows_for
-from app.auth.deps import Principal, get_principal
+from app.auth.deps import Principal, get_principal, require_roles
 from app.auth.roles import ADMIN, BUYER, MANAGER
 from app.core.envelope import ok
 from app.core.request_id import get_request_id
@@ -80,7 +81,13 @@ async def generate_plan(
         status="draft",
     )
     session.add(plan)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        # B18: two concurrent generate_plan calls race on max()+1 — the
+        # unique index fires; map it to a 409 envelope, never a raw 500.
+        await session.rollback()
+        return err(409, "conflict", "Plan version conflict; retry.", rid)
     for t in specs:
         role = "Buyer" if t["autonomy_class"] == "AUTO" else "ProcurementManager"
         session.add(
@@ -155,12 +162,10 @@ async def acknowledge_plan(
     mission_id: str,
     version: int,
     request: Request,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(require_roles(MANAGER)),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
     rid = get_request_id(request)
-    if MANAGER not in principal.roles and ADMIN not in principal.roles:
-        return err(403, "forbidden", "Plan acknowledgement needs a manager.", rid)
     try:
         m = await must_mission(session, principal, mission_id)
     except Exception as e:
@@ -199,7 +204,21 @@ async def acknowledge_plan(
         after={"version": version},
     )
     await session.commit()
-    return ok({"version": version, "status": p.status}, rid)
+    # Wire the queue (B1): acknowledged plans enqueue their tasks onto the
+    # pos:* namespace. Best-effort — a down Redis leaves tasks on the board
+    # (the retry path still works) but the acknowledge itself must not fail.
+    enqueued = 0
+    try:
+        from worker.queue import enqueue_task
+
+        task_rows = await rows_for(session, MissionTask, m.id)
+        for t in task_rows:
+            if t.plan_version == version and t.status == "queued":
+                enqueue_task(m.id, t.key, t.idempotency_key or t.id)
+                enqueued += 1
+    except Exception:
+        enqueued = 0
+    return ok({"version": version, "status": p.status, "enqueued": enqueued}, rid)
 
 
 @router.get("/missions/{mission_id}/tasks")
@@ -247,8 +266,31 @@ async def _one_task(
     m: Mission,
     key: str,
 ) -> MissionTask | None:
+    # Keys repeat across plan versions: pin the current version so a bare
+    # (mission_id, key) select never raises MultipleResultsFound (B2).
+    plan_q = await session.execute(
+        select(MissionPlan.version)
+        .where(MissionPlan.mission_id == m.id)
+        .order_by(MissionPlan.version.desc())
+        .limit(1)
+    )
+    version = plan_q.scalar_one_or_none()
+    if version is not None:
+        q = await session.execute(
+            select(MissionTask).where(
+                MissionTask.mission_id == m.id,
+                MissionTask.key == key,
+                MissionTask.plan_version == version,
+            )
+        )
+        task = q.scalar_one_or_none()
+        if task is not None:
+            return task
     q = await session.execute(
-        select(MissionTask).where(MissionTask.mission_id == m.id, MissionTask.key == key)
+        select(MissionTask)
+        .where(MissionTask.mission_id == m.id, MissionTask.key == key)
+        .order_by(MissionTask.plan_version.desc())
+        .limit(1)
     )
     return q.scalar_one_or_none()
 
@@ -273,12 +315,27 @@ async def retry_task(
     t = await _one_task(session, m, key)
     if t is None:
         return err(404, "not_found", "No such task.", rid)
+    # Idempotent retry (B42): the key is persisted per task and a replay
+    # returns the original outcome instead of bumping attempts again.
+    ik = (request.headers.get("Idempotency-Key") or "").strip()
+    log = list(t.activity_log or [])
+    prior = next((e for e in log if e.get("idempotency_key") == ik), None)
+    if prior is not None:
+        return ok(
+            {
+                "key": key,
+                "status": prior.get("status", t.status),
+                "attempts": t.attempts,
+                "replayed": True,
+            },
+            rid,
+        )
     t.attempts += 1
     t.status = "queued"
-    t.activity_log = list(t.activity_log or []) + [{"event": "retried", "by": principal.user_id}]
+    t.activity_log = log + [{"event": "retried", "by": principal.user_id, "idempotency_key": ik}]
     await aud(session, request, principal, "task_retried", m, "task", t.id, after={"key": key})
     await session.commit()
-    return ok({"key": key, "status": t.status, "attempts": t.attempts}, rid)
+    return ok({"key": key, "status": t.status, "attempts": t.attempts, "replayed": False}, rid)
 
 
 @router.post("/missions/{mission_id}/tasks/{key}/review")
@@ -302,6 +359,12 @@ async def review_task(
     t = await _one_task(session, m, key)
     if t is None:
         return err(404, "not_found", "No such task.", rid)
+    if t.status == "blocked":
+        # Quarantine bypass (B43): a blocked task can never be reviewed into
+        # done/needs_review — it must be retried (which requeues it) instead.
+        return err(
+            422, "review_refused", "Blocked tasks cannot be reviewed; retry them instead.", rid
+        )
     t.status = "done" if body.decision == "accept" else "needs_review"
     t.activity_log = list(t.activity_log or []) + [
         {"event": f"reviewed:{body.decision}", "by": principal.user_id, "note": body.note}
@@ -362,10 +425,25 @@ async def timeline(
         m = await must_mission(session, principal, mission_id)
     except Exception as e:
         return not_found(request, e)
-    ev_q = select(TimelineEvent).where(TimelineEvent.mission_id == m.id)
+    rid = get_request_id(request)
+    # SQL-filtered + capped (B39): the `since` cursor parses to a real
+    # timestamp; unbounded feeds are never allowed.
+    since_dt = None
+    if since:
+        from datetime import datetime
+
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            return err(422, "validation_error", "since must be an ISO timestamp.", rid)
+    ev_q = select(TimelineEvent).where(TimelineEvent.mission_id == m.id).limit(500)
+    if since_dt is not None:
+        ev_q = ev_q.where(TimelineEvent.created_at >= since_dt)
     ev_q = ev_q.order_by(TimelineEvent.created_at)
     events = (await session.execute(ev_q)).scalars().all()
-    au_q = select(AuditEvent).where(AuditEvent.mission_id == m.id)
+    au_q = select(AuditEvent).where(AuditEvent.mission_id == m.id).limit(500)
+    if since_dt is not None:
+        au_q = au_q.where(AuditEvent.created_at >= since_dt)
     au_q = au_q.order_by(AuditEvent.created_at)
     audits = (await session.execute(au_q)).scalars().all()
     items: list[dict[str, Any]] = [
@@ -380,6 +458,5 @@ async def timeline(
         }
         for a in audits
     ]
-    if since:
-        items = [i for i in items if i["at"] >= since]
+    items.sort(key=lambda i: i["at"])
     return ok({"events": items}, get_request_id(request))

@@ -40,7 +40,16 @@ def to_csv(rows: list[dict[str, Any]]) -> bytes:
     buf = io.StringIO()
     if not rows:
         return b""
-    w = csv.DictWriter(buf, fieldnames=sorted(rows[0].keys()))
+    fieldnames = sorted({k for row in rows for k in row})
+    w = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
     w.writeheader()
-    w.writerows(rows)
+    for row in rows:
+        w.writerow({k: _safe_cell(v) for k, v in row.items()})
     return buf.getvalue().encode()
+
+
+def _safe_cell(value: Any) -> Any:
+    # Excel formula injection: a cell starting with = + - @ is neutralized.
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@"):
+        return f"'{value}"
+    return value

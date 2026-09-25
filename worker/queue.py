@@ -55,6 +55,12 @@ async def apply_task(
     from app.audit.writer import append_event
     from app.tools import registry
 
+    if task.status == "done":
+        # Terminal short-circuit: re-running a completed task must not
+        # re-dispatch the tool or append duplicate audit events.
+        return {"status": "done", "reason": "already_done", "tool": task.tool_name}
+    if task.status == "failed":
+        return {"status": "failed", "reason": "quarantined", "tool": task.tool_name}
     tool = registry.ALLOWLIST.get(task.tool_name)
     if tool is None:
         task.attempts += 1
@@ -104,6 +110,28 @@ async def apply_task(
         ]
         await session.flush()
         return {"status": task.status, "reason": str(e)}
+    except Exception as e:
+        # Runtime failures (bad args, engine errors) must still bookkeep (B14):
+        # attempts increment, status moves, audit records — DB and queue state
+        # never diverge silently.
+        task.attempts += 1
+        task.status = "failed" if should_quarantine(task.attempts) else "blocked"
+        task.activity_log = list(task.activity_log or []) + [
+            {"event": "dispatch_error", "error": str(e)}
+        ]
+        await append_event(
+            session,
+            tenant_id=task.tenant_id,
+            action="task_failed",
+            actor_id=actor_id,
+            mission_id=task.mission_id,
+            request_id=request_id,
+            object_type="task",
+            object_id=task.id,
+            reason=str(e),
+        )
+        await session.flush()
+        return {"status": task.status, "reason": str(e)}
     task.status = "done"
     task.result_ref = f"{tool.name}:{tool.version}"
     task.activity_log = list(task.activity_log or []) + [
@@ -139,16 +167,27 @@ def run_task_job(mission_id: str, task_key: str, actor_id: str = "worker") -> di
         engine = create_async_engine(settings.database_url)
         mk = async_sessionmaker(engine, expire_on_commit=False)
         async with mk() as session:
-            q = await session.execute(
-                select(MissionTask).where(
-                    MissionTask.mission_id == mission_id, MissionTask.key == task_key
-                )
+            from app.models.mission import Mission, MissionPlan
+
+            # Keys repeat across plan versions (B2): pin the current plan
+            # version so the select never raises MultipleResultsFound.
+            plan_q = await session.execute(
+                select(MissionPlan.version)
+                .where(MissionPlan.mission_id == mission_id)
+                .order_by(MissionPlan.version.desc())
+                .limit(1)
             )
+            version = plan_q.scalar_one_or_none()
+            stmt = select(MissionTask).where(
+                MissionTask.mission_id == mission_id, MissionTask.key == task_key
+            )
+            if version is not None:
+                stmt = stmt.where(MissionTask.plan_version == version)
+            stmt = stmt.order_by(MissionTask.plan_version.desc()).limit(1)
+            q = await session.execute(stmt)
             task = q.scalar_one_or_none()
             if task is None:
                 return {"status": "missing", "reason": "no such task"}
-            from app.models.mission import Mission
-
             m = await session.get(Mission, mission_id)
             autonomy = m.autonomy_level if m else "SUPERVISED"
             out = await apply_task(session, task, actor_id=actor_id, autonomy_level=autonomy)
@@ -156,3 +195,19 @@ def run_task_job(mission_id: str, task_key: str, actor_id: str = "worker") -> di
             return out
 
     return asyncio.run(_run())
+
+
+async def ping_redis() -> bool:
+    """Health probe for /healthz (B35): never raises, just reports."""
+    try:
+        from redis.asyncio import Redis
+
+        from app.core.config import settings
+
+        client = Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+        try:
+            return bool(await client.ping())
+        finally:
+            await client.aclose()
+    except Exception:
+        return False

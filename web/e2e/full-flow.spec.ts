@@ -32,7 +32,7 @@ test("W1-W8: intake through report", async ({ page }) => {
   await page.getByLabel("Title").fill(`E2E Mission ${Date.now()}`);
   await page.locator(".gate-grid").getByRole("button", { name: "Create mission" }).click();
   await page.waitForURL("**/agent/*/intake");
-  const missionId = page.url().split("/")[4];
+  const missionId = page.url().split("/")[4] ?? "";
   expect(missionId.length).toBeGreaterThan(0);
 
   // W2: upload + quarantine verdict + plan + advance to plan.

@@ -4,23 +4,28 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: pos
-      POSTGRES_PASSWORD: pos
-      POSTGRES_DB: pos
+      # Dev defaults overridable via .env (compose reads it automatically);
+      # staging/prod inject real secrets from a manager, never this file.
+      POSTGRES_USER: ${POSTGRES_USER:-pos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pos}
+      POSTGRES_DB: ${POSTGRES_DB:-pos}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pos"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pos}"]
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+    mem_limit: 512m
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -28,16 +33,18 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+    mem_limit: 256m
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: pos
-      MINIO_ROOT_PASSWORD: posminio123
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-pos}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-posminio123}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -45,40 +52,57 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    mem_limit: 512m
 
   mock-ai:
-    image: hashicorp/http-echo:latest
+    image: hashicorp/http-echo:1.11.0
     command: ["-text", "{\"mock\": true}"]
     ports:
-      - "5678:5678"
+      - "127.0.0.1:5678:5678"
 
   api:
     build:
       context: .
       dockerfile: Dockerfile.api
-    env_file: .env
+    # required: false — CI builds api/worker without a committed .env;
+    # locally compose still reads .env for overridable dev values.
+    env_file:
+      - path: .env
+        required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://pos:pos@postgres:5432/pos
-      REDIS_URL: redis://redis:6379/0
-      S3_ENDPOINT: http://minio:9000
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://pos:pos@postgres:5432/pos}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    mem_limit: 1g
 
   worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://pos:pos@postgres:5432/pos
-      REDIS_URL: redis://redis:6379/0
-      S3_ENDPOINT: http://minio:9000
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://pos:pos@postgres:5432/pos}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,17 +111,28 @@ services:
     command: python -m worker.task_worker
     deploy:
       replicas: 2
+    restart: unless-stopped
+    mem_limit: 1g
 
   web:
     build:
       context: .
       dockerfile: Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000/api/v1}
     ports:
-      - "3000:3000"
-    environment:
-      NEXT_PUBLIC_API_BASE: http://localhost:8000/api/v1
+      - "127.0.0.1:3000:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/agent || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 1g
 
 volumes:
   pgdata:

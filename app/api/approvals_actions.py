@@ -177,7 +177,7 @@ async def action_dry_run(
         # Server-side value check refused (e.g. AWARD without certified TCO):
         # the dry-run must say NEEDS-APPROVAL with the reason, not 500.
         return err(422, "dryrun_refused", str(e), rid)
-    verdict = dry_run_eval(body.action_class, {**body.payload, "payload_hash_match": True}, quorum)
+    verdict = dry_run_eval(body.action_class, dict(body.payload), quorum)
     await aud(
         session,
         request,

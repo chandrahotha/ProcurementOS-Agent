@@ -109,7 +109,7 @@ async def test_expired_wrongaud_unknownkid_badsig_rejected(fake_idp, keys):
     pem, jwk = keys
     mk, _ = await _seed("sub-1")
     bad = [
-        _tok(pem, exp_in=-10),  # expired
+        _tok(pem, exp_in=-3600),  # expired an hour ago (leeway only covers skew)
         _tok(pem, aud="someone-else"),  # wrong audience
         _tok(pem, kid="nope"),  # unknown kid
         _tok(pem)[:-4] + "abcd",  # tampered signature

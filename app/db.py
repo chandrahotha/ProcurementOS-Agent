@@ -14,24 +14,28 @@ from sqlalchemy.ext.asyncio import (
 from app.core.config import settings
 from app.models.base import Base
 
-_engine: AsyncEngine | None = None
-_session_factory: async_sessionmaker[AsyncSession] | None = None
+_engines: dict[str, AsyncEngine] = {}
+_factories: dict[str, async_sessionmaker[AsyncSession]] = {}
 
 
 def get_engine(url: str | None = None) -> AsyncEngine:
-    global _engine
-    if _engine is None:
-        _engine = create_async_engine(url or settings.database_url, pool_pre_ping=True)
-    return _engine
+    # Cache keyed by URL (B54): a second call with a different URL must not
+    # silently return the first engine.
+    key = url or settings.database_url
+    engine = _engines.get(key)
+    if engine is None:
+        engine = create_async_engine(key, pool_pre_ping=True)
+        _engines[key] = engine
+    return engine
 
 
 def get_session_factory(url: str | None = None) -> async_sessionmaker[AsyncSession]:
-    global _session_factory
-    if _session_factory is None:
-        _session_factory = async_sessionmaker(
-            get_engine(url), class_=AsyncSession, expire_on_commit=False
-        )
-    return _session_factory
+    key = url or settings.database_url
+    factory = _factories.get(key)
+    if factory is None:
+        factory = async_sessionmaker(get_engine(url), class_=AsyncSession, expire_on_commit=False)
+        _factories[key] = factory
+    return factory
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

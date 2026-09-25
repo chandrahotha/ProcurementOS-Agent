@@ -1,6 +1,7 @@
 """Issue 1: full HTTP lifecycle W1-W8 + authZ matrix (sqlite, override)."""
 
 import asyncio
+import hashlib
 
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -14,32 +15,41 @@ TENANT = "t-api"
 V1 = "/api/v1"
 
 
+def _digest(token: str) -> str:
+    # Tokens are stored hashed (B22): the dev fallback matches the digest.
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 async def _seed(engine):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     mk = async_sessionmaker(engine, expire_on_commit=False)
     async with mk() as s:
         users = {}
+        roles_by_email = {}
         crew = [
-            ("Buyer", "buyer@x.io"),
-            ("Manager", "daniel@x.io"),
-            ("Finance", "fatima@x.io"),
-            ("Compliance", "chen@x.io"),
+            ("Buyer", "buyer@x.io", ["Buyer"]),
+            ("Manager", "daniel@x.io", ["ProcurementManager", "Buyer"]),
+            ("Finance", "fatima@x.io", ["FinanceReviewer"]),
+            ("Compliance", "chen@x.io", ["ComplianceReviewer"]),
         ]
-        for name, email in crew:
-            u = User(tenant_id=TENANT, email=email, name=name, api_token=f"tok-{email}")
+        for name, email, roles in crew:
+            u = User(tenant_id=TENANT, email=email, name=name, api_token=_digest(f"tok-{email}"))
             s.add(u)
             await s.flush()
             users[email] = u.id
+            roles_by_email[email] = roles
         ws = Workspace(
             tenant_id=TENANT,
             name="WS",
             budget_currency="EUR",
-            members=[{"user_id": uid} for uid in users.values()],
+            members=[
+                {"user_id": uid, "roles": roles_by_email[email]} for email, uid in users.items()
+            ],
         )
         s.add(ws)
         await s.flush()
-        other = User(tenant_id="t-other", email="o@x.io", name="O", api_token="tok-other")
+        other = User(tenant_id="t-other", email="o@x.io", name="O", api_token=_digest("tok-other"))
         s.add(other)
         await s.commit()
         return users, ws.id

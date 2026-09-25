@@ -19,8 +19,13 @@ from app.auth.roles import ADMIN, BUYER, MANAGER
 from app.core.envelope import ok
 from app.core.request_id import get_request_id
 from app.db import get_session
-from app.models.foundation import Approval, AuditEvent, Workspace
-from app.models.mission import RuleVersion, ScenarioResult
+from app.models.foundation import Approval, AuditEvent, Supplier, SupplierSite, Workspace
+from app.models.mission import (
+    RiskResult,
+    RuleVersion,
+    ScenarioResult,
+    SourcingResult,
+)
 
 router = APIRouter()
 
@@ -61,7 +66,7 @@ async def list_scenarios(
         m = await must_mission(session, principal, mission_id)
     except Exception as e:
         return not_found(request, e)
-    rows = await rows_for(session, ScenarioResult, m.id)
+    rows = await rows_for(session, ScenarioResult, m.id, tenant_id=m.tenant_id, limit=500)
     return ok(
         {
             "scenarios": [
@@ -93,7 +98,7 @@ async def list_approvals(
         return not_found(request, e)
     from app.api.common import rows_for as rf
 
-    rows = await rf(session, Approval, m.id)
+    rows = await rf(session, Approval, m.id, tenant_id=m.tenant_id, limit=500)
     return ok(
         {
             "approvals": [
@@ -121,7 +126,7 @@ async def audit_log(
 ) -> Any:
     """Tenant-wide hash-chained events, newest first (G13)."""
     q = select(AuditEvent).where(AuditEvent.tenant_id == principal.tenant_id)
-    q = q.order_by(AuditEvent.created_at.desc()).limit(min(limit, 500))
+    q = q.order_by(AuditEvent.created_at.desc()).limit(max(0, min(limit, 500)))
     rows = (await session.execute(q)).scalars().all()
     return ok(
         {
@@ -134,13 +139,55 @@ async def audit_log(
                     "actor_id": r.actor_id,
                     "request_id": r.request_id,
                     "reason": r.reason,
-                    "event_hash": r.event_hash[:16],
+                    # Full hashes + prev_hash (B34): clients can verify the
+                    # chain; truncation weakened tamper evidence.
+                    "event_hash": r.event_hash,
+                    "prev_hash": r.prev_hash,
                     "at": r.created_at.isoformat(),
                 }
                 for r in rows
             ]
         },
         get_request_id(request),
+    )
+
+
+@router.get("/audit/verify")
+async def audit_verify(
+    request: Request,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Re-walk the tenant's hash chain end to end (B34): tamper detection."""
+    rid = get_request_id(request)
+    from app.audit.writer import chain_hash
+
+    q = (
+        select(AuditEvent)
+        .where(AuditEvent.tenant_id == principal.tenant_id)
+        .order_by(AuditEvent.created_at, AuditEvent.id)
+    )
+    rows = (await session.execute(q)).scalars().all()
+    prev = "GENESIS"
+    broken_at: str | None = None
+    for r in rows:
+        body = {
+            "tenant": r.tenant_id,
+            "action": r.action,
+            "actor": r.actor_id,
+            "mission": r.mission_id,
+            "object": [r.object_type, r.object_id],
+            "before": r.before_hash,
+            "after": r.after_hash,
+            "request": r.request_id,
+        }
+        if r.prev_hash != prev or chain_hash(prev, body) != r.event_hash:
+            broken_at = r.id
+            break
+        prev = r.event_hash
+    return ok(
+        {"events_checked": len(rows), "intact": broken_at is None, "broken_at": broken_at},
+        rid,
     )
 
 
@@ -198,3 +245,275 @@ async def settle_actions(
     await aud(session, request, principal, "actions_settled", m, "mission", m.id)
     await session.commit()
     return ok({"mission_id": m.id, "settled": True}, rid)
+
+
+@router.get("/suppliers")
+async def list_suppliers(
+    request: Request,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Tenant supplier directory (G09, B48): Supplier rows joined with the
+    latest certified risk/sourcing results, newest first."""
+    rid = get_request_id(request)
+    q = (
+        select(Supplier)
+        .where(Supplier.tenant_id == principal.tenant_id)
+        .order_by(Supplier.code)
+        .limit(500)
+    )
+    suppliers = (await session.execute(q)).scalars().all()
+    risks = (
+        (
+            await session.execute(
+                select(RiskResult)
+                .where(RiskResult.tenant_id == principal.tenant_id)
+                .order_by(RiskResult.created_at.desc())
+                .limit(500)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    sourcing = (
+        (
+            await session.execute(
+                select(SourcingResult)
+                .where(SourcingResult.tenant_id == principal.tenant_id)
+                .order_by(SourcingResult.created_at.desc())
+                .limit(500)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    latest_risk: dict[str, RiskResult] = {}
+    for rk in risks:
+        latest_risk.setdefault(rk.supplier_id, rk)
+    latest_rank: dict[str, int] = {}
+    for sr in sourcing:
+        latest_rank.setdefault(sr.supplier_id, sr.rank)
+    out = [
+        {
+            "id": s.id,
+            "code": s.code,
+            "name": s.name,
+            "country": s.country,
+            "status": s.status,
+            "risk_composite": latest_risk[s.id].composite if s.id in latest_risk else None,
+            "risk_band": latest_risk[s.id].band if s.id in latest_risk else None,
+            "last_rank": latest_rank.get(s.id),
+        }
+        for s in suppliers
+    ]
+    return ok({"suppliers": out}, rid)
+
+
+@router.get("/suppliers/{supplier_id}")
+async def supplier_profile(
+    supplier_id: str,
+    request: Request,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Supplier profile (G10, B48): site, KPIs, risk history, sourcing ranks."""
+    rid = get_request_id(request)
+    from engine.supplier_intel import compute_kpis
+
+    s = (
+        await session.execute(
+            select(Supplier).where(
+                Supplier.id == supplier_id, Supplier.tenant_id == principal.tenant_id
+            )
+        )
+    ).scalar_one_or_none()
+    if s is None:
+        return err(404, "not_found", "No such supplier.", rid)
+    site = (
+        await session.execute(select(SupplierSite).where(SupplierSite.supplier_id == s.id))
+    ).scalar_one_or_none()
+    from app.models.foundation import Transaction
+
+    txns = (
+        (
+            await session.execute(
+                select(Transaction)
+                .where(
+                    Transaction.tenant_id == principal.tenant_id, Transaction.supplier_id == s.id
+                )
+                .order_by(Transaction.created_at.desc())
+                .limit(100)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    risks = (
+        (
+            await session.execute(
+                select(RiskResult)
+                .where(RiskResult.tenant_id == principal.tenant_id, RiskResult.supplier_id == s.id)
+                .order_by(RiskResult.created_at.desc())
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return ok(
+        {
+            "id": s.id,
+            "code": s.code,
+            "name": s.name,
+            "country": s.country,
+            "status": s.status,
+            "site": {
+                "locale": site.locale if site else None,
+                "incoterm_default": site.incoterm_default if site else None,
+                "lead_time_days": site.lead_time_days if site else None,
+            },
+            "kpis": compute_kpis(
+                [
+                    {
+                        "on_time": t.on_time,
+                        "accepted": t.accepted,
+                        "qty": t.qty,
+                        "defects": t.defects,
+                    }
+                    for t in txns
+                ]
+            ),
+            "risk_history": [
+                {
+                    "composite": r.composite,
+                    "band": r.band,
+                    "weights_version": r.weights_version,
+                    "at": r.created_at.isoformat(),
+                }
+                for r in risks
+            ],
+        },
+        rid,
+    )
+
+
+@router.get("/ai-jobs")
+async def list_ai_jobs(
+    request: Request,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Tenant-wide AI run history (G17, B48): jobs + their results."""
+    rid = get_request_id(request)
+    from app.models.foundation import AIJob, AIResult
+
+    jobs = (
+        (
+            await session.execute(
+                select(AIJob)
+                .where(AIJob.tenant_id == principal.tenant_id)
+                .order_by(AIJob.created_at.desc())
+                .limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    job_ids = [j.id for j in jobs]
+    results: dict[str, AIResult] = {}
+    if job_ids:
+        rows = (
+            (await session.execute(select(AIResult).where(AIResult.job_id.in_(job_ids)).limit(500)))
+            .scalars()
+            .all()
+        )
+        for r in rows:
+            results.setdefault(r.job_id, r)
+    return ok(
+        {
+            "jobs": [
+                {
+                    "id": j.id,
+                    "mission_id": j.mission_id,
+                    "purpose": j.purpose,
+                    "provider": j.provider,
+                    "model_version": j.model_version,
+                    "status": j.status,
+                    "error": j.error,
+                    "result_label": results[j.id].label if j.id in results else None,
+                    "at": j.created_at.isoformat(),
+                }
+                for j in jobs
+            ]
+        },
+        rid,
+    )
+
+
+@router.get("/notifications")
+async def list_notifications(
+    request: Request,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Derived notification feed (G05, B48): pending approvals, gate
+    rejections, task blocks — from real rows, newest first."""
+    rid = get_request_id(request)
+    items: list[dict[str, Any]] = []
+    pending = (
+        (
+            await session.execute(
+                select(Approval)
+                .where(Approval.tenant_id == principal.tenant_id, Approval.status == "pending")
+                .order_by(Approval.created_at.desc())
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for a in pending:
+        items.append(
+            {
+                "kind": "approval_pending",
+                "title": f"{a.lane} lane awaiting decision ({a.action_class})",
+                "mission_id": a.mission_id,
+                "at": a.created_at.isoformat(),
+            }
+        )
+    denials = (
+        (
+            await session.execute(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.tenant_id == principal.tenant_id,
+                    AuditEvent.action.in_(
+                        [
+                            "award_blocked_no_approval",
+                            "action_blocked",
+                            "document_rejected",
+                            "transition_refused",
+                            "unknown_tool_blocked",
+                            "task_failed",
+                            "waiver_denied",
+                        ]
+                    ),
+                )
+                .order_by(AuditEvent.created_at.desc())
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for d in denials:
+        items.append(
+            {
+                "kind": "gate_denied",
+                "title": d.action + (f" — {d.reason}" if d.reason else ""),
+                "mission_id": d.mission_id,
+                "at": d.created_at.isoformat(),
+            }
+        )
+    items.sort(key=lambda i: i["at"], reverse=True)
+    return ok({"notifications": items[:100]}, rid)

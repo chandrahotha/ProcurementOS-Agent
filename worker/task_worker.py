@@ -14,12 +14,13 @@ def main() -> None:
     from rq import Connection, Queue, Worker
 
     from app.core.config import settings
-    from worker.queue import MAX_ATTEMPTS
 
     with Connection(Redis.from_url(settings.redis_url)):
         queue = Queue("pos:tasks")
         worker = Worker([queue], name="pos-task-worker")
-        worker.work(max_jobs=MAX_ATTEMPTS * 100)
+        # No max_jobs: the worker is the container's main process and must
+        # drain the queue indefinitely, never exit silently after N jobs (B13).
+        worker.work()
 
 
 if __name__ == "__main__":

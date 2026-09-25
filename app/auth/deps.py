@@ -1,13 +1,22 @@
 """Auth dependencies.
 
-Prod: OIDC Bearer JWT (validated against OIDC_ISSUER/AUDIENCE).
-Dev/test: when no OIDC_ISSUER is configured, accept `Test <token>` or
-`Bearer <api_token>` mapped to pos_user.api_token (documented dev fallback;
-CI uses it for golden tests). Never accept the fallback when OIDC is configured.
+Prod: OIDC Bearer JWT (validated against OIDC_ISSUER/AUDIENCE). The dev-token
+fallback is a dev/test convenience ONLY: it is unreachable whenever
+OIDC_ISSUER is configured, and the app refuses to boot in production without
+one (bugs/01-backend.md B21).
+
+Dev fallback: `Bearer <token>` / `Test <token>` matched against the SHA-256
+digest of pos_user.api_token — tokens are never stored or compared in
+plaintext (B22) — with roles derived from workspace membership, never from
+the email prefix (B23).
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import hmac
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -30,44 +39,58 @@ class Principal:
     roles: list[str]
 
 
+def token_digest(token: str) -> str:
+    """SHA-256 of the presented token: at rest only digests are stored."""
+    return hashlib.sha256(token.strip().encode()).hexdigest()
+
+
+# Per-process TTL cache for membership roles (B41): the workspace scan would
+# otherwise run on every authenticated request. Role changes reflect within
+# the TTL window; lane-critical paths re-check via require_roles/decide.
+_ROLES_TTL_S = 30.0
+_roles_cache: dict[tuple[str, str], tuple[float, list[str]]] = {}
+
+
 async def _dev_principal(authorization: str, session: AsyncSession) -> Principal | None:
     if settings.oidc_issuer:
         return None
     scheme, _, token = authorization.partition(" ")
     if scheme not in ("Bearer", "Test") or not token:
         return None
-    q = await session.execute(select(User).where(User.api_token == token.strip()))
+    digest = token_digest(token)
+    q = await session.execute(select(User).where(User.api_token == digest))
     user = q.scalar_one_or_none()
     if user is None:
         return None
-    # Roles come from workspace membership in Phase 2; dev fallback: email-prefix map.
+    # Timing-safe compare on the stored digest (belt-and-braces).
+    if not hmac.compare_digest(user.api_token or "", digest):
+        return None
     return Principal(
-        user_id=user.id, tenant_id=user.tenant_id, email=user.email, roles=_roles_for(user)
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        email=user.email,
+        roles=await _membership_roles(session, user),
     )
 
 
-def _roles_for(user: User) -> list[str]:
-    prefix = user.email.split("@")[0].lower()
-    if prefix.startswith("daniel"):
-        return [R.MANAGER, R.BUYER]
-    if prefix.startswith("fatima"):
-        return [R.FINANCE]
-    if prefix.startswith("chen"):
-        return [R.COMPLIANCE]
-    if prefix.startswith("admin"):
-        return [R.ADMIN]
-    return [R.BUYER]
-
-
 async def _membership_roles(session: AsyncSession, user: User) -> list[str]:
-    """Union of lane roles from workspace memberships; Buyer default."""
+    """Union of lane roles from workspace memberships; Buyer default.
+
+    Roles never derive from the email prefix (B23)."""
+    key = (user.tenant_id, user.id)
+    now = time.monotonic()
+    hit = _roles_cache.get(key)
+    if hit is not None and now - hit[0] < _ROLES_TTL_S:
+        return hit[1]
     q = await session.execute(select(Workspace).where(Workspace.tenant_id == user.tenant_id))
     found: set[str] = set()
     for ws in q.scalars().all():
         for m in ws.members or []:
             if m.get("user_id") == user.id:
                 found.update(m.get("roles", []))
-    return sorted(found) or [R.BUYER]
+    roles = sorted(found) or [R.BUYER]
+    _roles_cache[key] = (now, roles)
+    return roles
 
 
 async def _oidc_principal(authorization: str, session: AsyncSession) -> Principal:
@@ -75,7 +98,11 @@ async def _oidc_principal(authorization: str, session: AsyncSession) -> Principa
     if scheme != "Bearer" or not token:
         raise HTTPException(status_code=401, detail="Missing credentials")
     try:
-        claims = verify_bearer(token.strip(), settings.oidc_issuer, settings.oidc_audience)
+        # The JWKS fetch can block for seconds when the IdP is slow or down:
+        # run it off the event loop so auth latency never starves requests (B24).
+        claims = await asyncio.to_thread(
+            verify_bearer, token.strip(), settings.oidc_issuer, settings.oidc_audience
+        )
     except AuthError as e:
         raise HTTPException(status_code=401, detail=str(e)) from e
     sub = str(claims.get("sub", ""))

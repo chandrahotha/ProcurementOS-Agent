@@ -1,5 +1,6 @@
 ﻿// P13 Human Approval, wired: loads the real approval queue for the mission,
 // decides per lane, and carries the hash-locked payload through to action.
+// Busy state guards double-submit; decisions are terminal (server-enforced).
 "use client";
 
 import { use, useEffect, useState } from "react";
@@ -7,6 +8,7 @@ import { Screen } from "@/components/Screen";
 import { AdvancePanel } from "@/components/AdvancePanel";
 import { api } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
+import { EmptyState, Field, StateBadge } from "@/components/ui";
 
 type Row = { id: string; lane: string; status: string; action_class: string;
   expires_at: string | null; payload_hash: string };
@@ -17,6 +19,7 @@ export default function ApprovalPage(props: { params: Promise<{ id: string }> })
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
   const [denied, setDenied] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   async function load() {
     try {
@@ -29,17 +32,21 @@ export default function ApprovalPage(props: { params: Promise<{ id: string }> })
   useEffect(() => { void load(); /* eslint-disable-next-line */ }, [id]);
 
   async function decide(aid: string, decision: "approved" | "rejected") {
+    if (busy) return;
     if (decision === "rejected" && !reason.trim()) {
       setNote("Reject needs a reason — it goes into the audit trail.");
       return;
     }
     setNote("");
+    setBusy(true);
     try {
       const out = await api.decide(id, aid, { decision, reason }, readToken());
       setNote(`Recorded: ${out.status}. Quorum ${out.quorum_met ? "met" : "not yet met"}.`);
       await load();
     } catch (e) {
       setNote(e instanceof Error ? e.message : "decide failed");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -48,35 +55,52 @@ export default function ApprovalPage(props: { params: Promise<{ id: string }> })
   const quorum = rows.length > 0 && pending.length === 0 && approved.length > 0;
 
   return (
-    <Screen code="P13" title="Human Approval" breadcrumb="Mission / Approval"
-      primary="Approve" state={denied ? "denied" : "success"}>
-      {note ? <p role="status">{note}</p> : null}
-      <label>Reason (required to reject)
+    <Screen code="P13" title="Human Approval" breadcrumb={[{ label: "Mission Control", href: "/agent" }, { label: "Approval" }]}
+      primary="Approve" onPrimary={() => pending[0] && void decide(pending[0].id, "approved")}
+      status="Lane decisions are terminal and hash-locked"
+      state={denied ? "denied" : "success"}>
+      {note ? <p role="status"><StateBadge state="info" /> {note}</p> : null}
+      <Field label="Reason (required to reject)">
         <input value={reason} onChange={(e) => setReason(e.target.value)}
           placeholder="Why this decision" />
-      </label>
-      <ul className="approval-list">
-        {rows.map((a) => (
-          <li key={a.id} className="approval-card">
-            <strong>{a.lane}</strong> <span>{a.action_class}</span>
-            <span>{a.status}</span>
-            <span className="mono">hash {a.payload_hash}…</span>
-            {a.status === "pending" ? (
-              <div className="row">
-                <button type="button" className="big"
-                  onClick={() => void decide(a.id, "approved")}>Approve</button>
-                <button type="button" className="big danger"
-                  onClick={() => void decide(a.id, "rejected")}>Reject</button>
+      </Field>
+      {rows.length === 0 ? (
+        <EmptyState icon="shield" title="No approvals yet"
+          body="Request them from the Decision Brief — the server picks the lanes per the policy matrix."
+          action={{ label: "Go to Decision Brief", href: `/agent/${id}/decision` }} />
+      ) : (
+        <ul className="approval-list">
+          {rows.map((a) => (
+            <li key={a.id} className="approval-card">
+              <div className="row flex-wrap items-center justify-between gap-2">
+                <div className="row gap-2">
+                  <strong className="text-sm">{a.lane}</strong>
+                  <StateBadge state={a.action_class} />
+                  <StateBadge state={a.status} />
+                </div>
+                <span className="mono text-xs text-text-2" title={a.payload_hash}>
+                  hash {a.payload_hash}…
+                </span>
               </div>
-            ) : null}
-          </li>
-        ))}
-      </ul>
+              {a.status === "pending" ? (
+                <div className="row">
+                  <button type="button" className="primary big flex-1"
+                    disabled={busy}
+                    onClick={() => void decide(a.id, "approved")}>Approve</button>
+                  <button type="button" className="danger big flex-1"
+                    disabled={busy}
+                    onClick={() => void decide(a.id, "rejected")}>Reject</button>
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
       {quorum ? (
         <AdvancePanel missionId={id} toState="action"
           label="Advance to action (quorum verified)" withPayload />
       ) : (
-        <p>Advance to action unlocks when every lane has approved and the
+        <p className="text-xs text-text-2">Advance to action unlocks when every lane has approved and the
           payload hash still matches.</p>
       )}
     </Screen>

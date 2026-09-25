@@ -1,6 +1,7 @@
 """Golden AGENT-001 (allowlist) + AGENT-002 (award gate). Real tests (Phase 4).
 
-AGENT-003/004 remain strict-xfail placeholders until Phase 5/6.
+AGENT-003 (ingest isolation) and AGENT-004 (AI outage fallback) are real and
+green below — they were placeholders only in early phases.
 """
 
 import pytest
@@ -109,7 +110,8 @@ async def test_agent_002_award_blocked_then_once_idempotent() -> None:
                 decision="approved",
                 reason="ok",
             )
-        # Expired/mismatched payload must NOT pass: tampered value changes hash.
+        # Expired/mismatched payload must NOT pass: a tampered value changes
+        # the payload hash; an expired approval row refuses decisions (T1).
         assert (
             await approvals.quorum_met(
                 s, tenant_id="t1", mission_id="m1", action_class="AWARD", payload=forged
@@ -215,3 +217,120 @@ async def test_agent_004_ai_outage_fallback() -> None:
     )
     assert res.ok is False and res.degraded is True and status == "degraded"
     assert res.payload == {}
+
+
+async def test_approval_expiry_refuses_decisions() -> None:
+    """T1: an expired approval row refuses decisions and quorum never met."""
+    from datetime import UTC, datetime, timedelta
+
+    mk = await _mk()
+    async with mk() as s:
+        s.add(
+            Mission(
+                id="m-exp",
+                tenant_id="t1",
+                workspace_id="w1",
+                title="Expiry",
+                currency="EUR",
+                state="approval",
+            )
+        )
+        await s.commit()
+        s.add(
+            CostResult(
+                tenant_id="t1",
+                mission_id="m-exp",
+                run_id="",
+                supplier_id="S1",
+                tco_minor=1_000,
+            )
+        )
+        await s.flush()
+        rows = await approvals.request_approval(
+            s,
+            tenant_id="t1",
+            mission_id="m-exp",
+            action_class="AWARD",
+            payload={"supplier_id": "S1"},
+            requested_by="u-buyer",
+        )
+        row = rows[0]
+        # Force the row expired: EXPIRY_DAYS would keep it live for 7 days.
+        row.expires_at = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        await s.flush()
+        import pytest as _pytest
+
+        with _pytest.raises(approvals.ApprovalError, match="expired"):
+            await approvals.decide(
+                s,
+                approval_id=row.id,
+                tenant_id="t1",
+                principal_roles=["ProcurementManager"],
+                principal_id="u-managerial",
+                decision="approved",
+                reason="ok",
+            )
+        assert (
+            await approvals.quorum_met(
+                s,
+                tenant_id="t1",
+                mission_id="m-exp",
+                action_class="AWARD",
+                payload={"supplier_id": "S1"},
+            )
+            is False
+        )
+
+
+async def test_decide_is_terminal() -> None:
+    """T16: an approved row can never be flipped by a later decide call."""
+    mk = await _mk()
+    async with mk() as s:
+        s.add(
+            Mission(
+                id="m-term",
+                tenant_id="t1",
+                workspace_id="w1",
+                title="Term",
+                currency="EUR",
+                state="approval",
+            )
+        )
+        await s.commit()
+        s.add(
+            CostResult(
+                tenant_id="t1", mission_id="m-term", run_id="", supplier_id="S1", tco_minor=1_000
+            )
+        )
+        await s.flush()
+        rows = await approvals.request_approval(
+            s,
+            tenant_id="t1",
+            mission_id="m-term",
+            action_class="AWARD",
+            payload={"supplier_id": "S1"},
+            requested_by="u-buyer",
+        )
+        row = rows[0]
+        await approvals.decide(
+            s,
+            approval_id=row.id,
+            tenant_id="t1",
+            principal_roles=["ProcurementManager"],
+            principal_id="u-managerial",
+            decision="approved",
+            reason="ok",
+        )
+        import pytest as _pytest
+
+        with _pytest.raises(approvals.ApprovalError, match="terminal"):
+            await approvals.decide(
+                s,
+                approval_id=row.id,
+                tenant_id="t1",
+                principal_roles=["ProcurementManager"],
+                principal_id="u-managerial-2",
+                decision="rejected",
+                reason="flip",
+            )
+        assert row.status == "approved"

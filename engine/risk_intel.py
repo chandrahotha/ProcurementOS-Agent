@@ -15,15 +15,18 @@ DEFAULT_WEIGHTS = {
 }
 
 
+def band_for(composite: int) -> str:
+    return next((b for limit, b in BANDS if composite < limit), "CRITICAL")
+
+
 def score(dimensions: dict[str, int], weights: dict[str, float] | None = None) -> dict[str, Any]:
     w = weights or DEFAULT_WEIGHTS
     if abs(sum(w.values()) - 1.0) > 1e-9:
         raise ValueError("risk weights must sum to 1.0")
     composite = round(sum(int(dimensions.get(k, 0)) * w[k] for k in w))
-    band = next(b for limit, b in BANDS if composite < limit)
     return {
         "dimensions": dict(dimensions),
         "weights": dict(w),
         "composite": composite,
-        "band": band,
+        "band": band_for(composite),
     }

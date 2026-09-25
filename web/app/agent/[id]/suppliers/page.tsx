@@ -1,12 +1,13 @@
 ﻿// P07 Supplier Intelligence, wired: run the native suite (idempotent) and
-// read sourcing rankings. KPIs come back in the run summary (OTD/PPM).
+// read sourcing rankings + run KPIs from the analysis summary (F6).
 "use client";
 
 import { use, useEffect, useState } from "react";
-import { Screen, ExceptionBanner } from "@/components/Screen";
+import { Screen } from "@/components/Screen";
 import { AdvancePanel } from "@/components/AdvancePanel";
-import { api } from "@/lib/api-client";
+import { api, stateForError } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
+import { EmptyState, StateBadge } from "@/components/ui";
 
 const DEMO_PAYLOAD = {
   modules: ["sourcing", "supplier", "cost", "risk"],
@@ -32,18 +33,18 @@ const DEMO_PAYLOAD = {
 export default function SuppliersPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
   const [lines, setLines] = useState<{ line_id: string; supplier_id: string;
-    normalized_total_minor: number; rank: number; compliant: boolean }[]>([]);
+    normalized_total_minor: number; rank: number; compliant: boolean; evidence_refs: string[] }[]>([]);
   const [kpis, setKpis] = useState<Record<string, unknown> | null>(null);
   const [note, setNote] = useState("");
-  const [state, setState] = useState<"empty" | "success">("empty");
+  const [state, setState] = useState<"loading" | "empty" | "success" | "error" | "denied">("loading");
 
   useEffect(() => {
     api.sourcing(id, readToken())
       .then((d) => {
         setLines((d as { lines: typeof lines }).lines ?? []);
-        if ((d as { lines: typeof lines }).lines?.length) setState("success");
+        setState((d as { lines: typeof lines }).lines?.length ? "success" : "empty");
       })
-      .catch(() => setState("empty"));
+      .catch((e) => setState(stateForError(e)));
   }, [id]);
 
   async function run() {
@@ -52,6 +53,9 @@ export default function SuppliersPage(props: { params: Promise<{ id: string }> }
       const out = await api.analyze(id, DEMO_PAYLOAD, readToken(),
         `web-${id}-analyze`);
       setNote(`Run ${out.run_id}${out.replayed ? " (replayed)" : ""} complete.`);
+      // Run KPIs come back in the analyze summary (F6): supplier_kpis.
+      const summary = out as unknown as { supplier_kpis?: Record<string, unknown> };
+      if (summary.supplier_kpis) setKpis(summary.supplier_kpis);
       const d = (await api.sourcing(id, readToken())) as { lines: typeof lines };
       setLines(d.lines ?? []);
       setState("success");
@@ -61,32 +65,48 @@ export default function SuppliersPage(props: { params: Promise<{ id: string }> }
   }
 
   return (
-    <Screen code="P07" title="Supplier Intelligence" breadcrumb="Mission / Suppliers"
-      primary="Run analysis" state={state}>
-      <ExceptionBanner count={0} worst="" href="#here" />
+    <Screen code="P07" title="Supplier Intelligence" breadcrumb={[{ label: "Mission Control", href: "/agent" }, { label: "Suppliers" }]}
+      status="Sourcing rankings from certified runs" state={state}>
       <div className="row">
-        <button type="button" onClick={() => void run()}>
+        <button type="button" className="primary" onClick={() => void run()}>
           Run native analysis suite
         </button>
       </div>
-      {note ? <p role="status">{note}</p> : null}
-      {kpis ? <pre className="mono">{JSON.stringify(kpis, null, 2)}</pre> : null}
-      <table>
-        <thead>
-          <tr><th>Line</th><th>Supplier</th><th>Total (minor)</th><th>Rank</th><th>Compliant</th></tr>
-        </thead>
-        <tbody>
-          {lines.map((l, i) => (
-            <tr key={i}>
-              <td className="mono">{l.line_id}</td>
-              <td>{l.supplier_id}</td>
-              <td className="mono">{l.normalized_total_minor}</td>
-              <td className="mono">{l.rank}</td>
-              <td>{l.compliant ? "yes" : "no"}</td>
-            </tr>
+      {note ? <p role="status"><StateBadge state="info" /> {note}</p> : null}
+      {kpis ? (
+        <div className="card row flex-wrap gap-4 text-sm">
+          <span className="text-xs font-semibold uppercase tracking-wider text-text-2">Run KPIs</span>
+          {Object.entries(kpis).map(([k, v]) => (
+            <span key={k} className="mono">
+              {k}: <strong>{String(v)}</strong>
+            </span>
           ))}
-        </tbody>
-      </table>
+        </div>
+      ) : null}
+      {state === "empty" ? (
+        <EmptyState icon="suppliers" title="No sourcing results yet"
+          body="Run the native analysis suite — sourcing, supplier KPIs, TCO, and risk compute deterministically and persist as certified rows." />
+      ) : state === "success" ? (
+        <div className="table-card">
+          <table>
+            <caption className="sr-only">Sourcing rankings per supplier</caption>
+            <thead>
+              <tr><th scope="col">Line</th><th scope="col">Supplier</th><th scope="col">Total (minor)</th><th scope="col">Rank</th><th scope="col">Compliant</th></tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={`${l.line_id}-${l.supplier_id}`}>
+                  <td data-label="Line" className="mono">{l.line_id}</td>
+                  <td data-label="Supplier" className="font-medium">{l.supplier_id}</td>
+                  <td data-label="Total (minor)" className="mono">{l.normalized_total_minor}</td>
+                  <td data-label="Rank" className="mono">{l.rank === 0 ? "—" : l.rank}</td>
+                  <td data-label="Compliant">{l.compliant ? <StateBadge state="ok" /> : <StateBadge state="bad" />}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
       <AdvancePanel missionId={id} toState="scenarios" label="Advance to scenarios"
         onAdvanced={() => setNote("State: scenarios.")} />
     </Screen>

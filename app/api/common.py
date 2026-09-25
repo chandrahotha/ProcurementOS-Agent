@@ -27,7 +27,8 @@ async def must_member(session: AsyncSession, principal: Principal, workspace_id:
         raise HTTPException(status_code=404, detail="Not found.")
     member_ids = [m.get("user_id") for m in (ws.members or [])]
     if principal.user_id not in member_ids and "Admin" not in principal.roles:
-        raise HTTPException(status_code=403, detail="Not a workspace member.")
+        # Safe 404 for non-members too: same shape as missing (no existence leak).
+        raise HTTPException(status_code=404, detail="Not found.")
     return ws
 
 
@@ -39,9 +40,23 @@ async def is_member(session: AsyncSession, principal: Principal, workspace_id: s
         return False
 
 
-async def rows_for(session: AsyncSession, model: Any, mission_id: str) -> list[Any]:
-    """All rows of a mission-scoped model (shortens the hot query shape)."""
-    q = await session.execute(select(model).where(model.mission_id == mission_id))
+async def rows_for(
+    session: AsyncSession,
+    model: Any,
+    mission_id: str,
+    *,
+    limit: int | None = None,
+    tenant_id: str | None = None,
+) -> list[Any]:
+    """Rows of a mission-scoped model. Callers run must_mission first; the
+    optional tenant_id predicate is defense-in-depth for future call sites.
+    `limit` caps every listing (unbounded queries are never allowed)."""
+    stmt = select(model).where(model.mission_id == mission_id)
+    if tenant_id is not None and hasattr(model, "tenant_id"):
+        stmt = stmt.where(model.tenant_id == tenant_id)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    q = await session.execute(stmt)
     return list(q.scalars().all())
 
 
@@ -110,8 +125,12 @@ def err(
 
 
 def not_found(request: Request, exc: Exception) -> Any:
-    """Safe 404 for missing-or-other-tenant objects (no existence leak)."""
-    status = getattr(exc, "status_code", 404)
+    """Safe 404 for missing-or-other-tenant objects (no existence leak).
+    Non-HTTP exceptions re-raise: genuine 500-class faults must never be
+    masked as 404."""
+    if not isinstance(exc, HTTPException):
+        raise exc
+    status = exc.status_code
     if status not in (403, 404):
         status = 404
     code = "forbidden" if status == 403 else "not_found"

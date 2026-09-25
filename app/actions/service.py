@@ -24,8 +24,13 @@ class ActionBlockedError(Exception):
 
 
 def dry_run(action_class: str, payload: dict[str, Any], quorum: bool) -> dict[str, Any]:
-    if action_class in ("AWARD", "FINANCIAL_COMMIT", "CONTRACTUAL_COMMIT", "EXTERNAL_COMM"):
-        if quorum and payload.get("payload_hash_match", True):
+    # Verdict derives solely from server-computed quorum: the client-declared
+    # payload_hash_match flag was removed (it was injected unconditionally by
+    # the HTTP layer, making it meaningless).
+    from app.approvals.policy import MATERIAL_CLASSES
+
+    if action_class in MATERIAL_CLASSES:
+        if quorum:
             return {
                 "verdict": "ALLOW",
                 "payload": payload,
@@ -44,10 +49,15 @@ def idem_key(mission_id: str, action_class: str, version: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-async def _receipt(session: AsyncSession, tenant_id: str, key: str) -> TimelineEvent | None:
+async def _receipt(
+    session: AsyncSession, tenant_id: str, mission_id: str, key: str
+) -> TimelineEvent | None:
+    # Receipt lookup is mission-scoped: the same key against a different
+    # mission must never return the first mission's receipt.
     q = await session.execute(
         select(TimelineEvent).where(
             TimelineEvent.tenant_id == tenant_id,
+            TimelineEvent.mission_id == mission_id,
             TimelineEvent.kind == "action_receipt",
         )
     )
@@ -70,7 +80,7 @@ async def execute(
     idempotency_key: str,
 ) -> dict[str, Any]:
     # Idempotent replay: same key returns the original receipt.
-    existing = await _receipt(session, tenant_id, idempotency_key)
+    existing = await _receipt(session, tenant_id, mission_id, idempotency_key)
     if existing is not None:
         return {"receipt": existing.payload, "replayed": True}
     try:

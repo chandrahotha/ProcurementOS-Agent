@@ -5,8 +5,20 @@
 import { useState, use } from "react";
 import { Screen } from "@/components/Screen";
 import { AdvancePanel } from "@/components/AdvancePanel";
-import { api, verdictTone } from "@/lib/api-client";
+import { api, stateForError, verdictTone } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
+import { Badge, Card, Field, StateBadge } from "@/components/ui";
+
+function hashPayload(payload: string): string {
+  // Simple client-side hash of the payload text (F12): the execute
+  // idempotency key changes when the payload changes, so a stale ALLOW can
+  // never reuse the original receipt for a different payload.
+  let h = 0;
+  for (let i = 0; i < payload.length; i++) {
+    h = (Math.imul(31, h) + payload.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(36);
+}
 
 export default function ActionsPage(props: { params: Promise<{ id: string }> }) {
   const params = use(props.params);
@@ -19,15 +31,32 @@ export default function ActionsPage(props: { params: Promise<{ id: string }> }) 
   const [receipt, setReceipt] = useState<Record<string, unknown> | null>(null);
   const [replayed, setReplayed] = useState(false);
   const [note, setNote] = useState("");
+  const [denied, setDenied] = useState(false);
+
+  // Stale-gate reset (F11): any change to what is being dry-run clears the
+  // verdict, so Execute stays disabled until the NEW payload validates.
+  function resetGate() {
+    setVerdict("");
+    setPolicy("");
+    setReceipt(null);
+    setReplayed(false);
+  }
 
   async function dryRun() {
+    if (denied) return;
     setNote("");
-    setReceipt(null);
-    const out = await api.dryRun(mid, {
-      action_class: actionClass, payload: JSON.parse(payload),
-    }, readToken());
-    setVerdict(out.verdict);
-    setPolicy(String(out.policy));
+    resetGate();
+    try {
+      const parsed: unknown = JSON.parse(payload); // guarded (F7)
+      const out = await api.dryRun(mid, {
+        action_class: actionClass, payload: parsed,
+      }, readToken());
+      setVerdict(out.verdict);
+      setPolicy(String(out.policy));
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : "dry-run failed");
+      setDenied(stateForError(e) === "denied");
+    }
   }
 
   async function execute() {
@@ -36,9 +65,12 @@ export default function ActionsPage(props: { params: Promise<{ id: string }> }) 
       return;
     }
     try {
-      const key = `web-${mid}-${actionClass}-v1`;
+      // Key derives from the payload hash (F12): a changed payload never
+      // reuses the original receipt.
+      const key = `web-${mid}-${actionClass}-${hashPayload(payload)}`;
+      const parsed: unknown = JSON.parse(payload);
       const out = await api.execute(mid, {
-        action_class: actionClass, payload: JSON.parse(payload), tool_name: tool,
+        action_class: actionClass, payload: parsed, tool_name: tool,
       }, readToken(), key);
       setReceipt(out.receipt);
       setReplayed(out.replayed);
@@ -60,38 +92,44 @@ export default function ActionsPage(props: { params: Promise<{ id: string }> }) 
 
   const tone = verdictTone(verdict || "DENY");
   return (
-    <Screen code="P14" title="Action Center" breadcrumb="Mission / Actions"
-      primary="Execute" state="success">
-      <label>Action class
-        <select value={actionClass} onChange={(e) => setActionClass(e.target.value)}>
-          <option>AWARD</option>
-          <option>FINANCIAL_COMMIT</option>
-          <option>CONTRACTUAL_COMMIT</option>
-          <option>EXTERNAL_COMM</option>
-        </select>
-      </label>
-      <label>Tool
-        <select value={tool} onChange={(e) => setTool(e.target.value)}>
-          <option>issue_po_intent</option>
-          <option>reserve_budget_intent</option>
-          <option>send_supplier_message</option>
-        </select>
-      </label>
-      <label>Payload (must hash-match the approval)
-        <textarea rows={4} value={payload} onChange={(e) => setPayload(e.target.value)} />
-      </label>
+    <Screen code="P14" title="Action Center" breadcrumb={[{ label: "Mission Control", href: "/agent" }, { label: "Actions" }]}
+      primary="Execute" onPrimary={() => void execute()} status="Dry-run first; execute only on ALLOW; receipts are idempotent" state={denied ? "denied" : "success"}>
+      <Card>
+        <div className="gate-grid">
+          <Field label="Action class">
+            <select value={actionClass} onChange={(e) => { setActionClass(e.target.value); resetGate(); }}>
+              <option>AWARD</option>
+              <option>FINANCIAL_COMMIT</option>
+              <option>CONTRACTUAL_COMMIT</option>
+              <option>EXTERNAL_COMM</option>
+            </select>
+          </Field>
+          <Field label="Tool">
+            <select value={tool} onChange={(e) => { setTool(e.target.value); resetGate(); }}>
+              <option>issue_po_intent</option>
+              <option>reserve_budget_intent</option>
+              <option>send_supplier_message</option>
+            </select>
+          </Field>
+          <Field label="Payload (must hash-match the approval)">
+            <textarea rows={4} value={payload}
+              onChange={(e) => { setPayload(e.target.value); resetGate(); }} />
+          </Field>
+        </div>
+      </Card>
       <div className="row">
         <button type="button" onClick={() => void dryRun()}>Dry-run</button>
-        <button type="button" disabled={verdict !== "ALLOW"}
+        <button type="button" className="primary" disabled={verdict !== "ALLOW"}
           onClick={() => void execute()}>Execute</button>
         <button type="button" onClick={() => void settle()}>Mark actions settled</button>
       </div>
       {verdict ? (
-        <p role="status" data-tone={tone}>
-          {verdict} — {policy}
+        <p role="status" data-tone={tone} className="row gap-2 text-sm">
+          <Badge tone={tone}>{verdict}</Badge>
+          <span className="text-text-2">{policy}</span>
         </p>
       ) : null}
-      {note ? <p role="status">{note}</p> : null}
+      {note ? <p role="status"><StateBadge state="info" /> {note}</p> : null}
       {receipt ? (
         <pre className="mono">{JSON.stringify({ ...receipt, replayed }, null, 2)}</pre>
       ) : null}

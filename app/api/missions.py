@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.common import (
     aud,
     err,
-    is_member,
     log_timeline,
     must_member,
     must_mission,
@@ -27,7 +26,7 @@ from app.db import get_session
 from app.evidence.service import coverage as coverage_of
 from app.ingest.pipeline import validate_upload, version_record
 from app.missions.machine import GateContext, check_transition
-from app.models.foundation import Document, DocumentVersion, EvidenceSpan
+from app.models.foundation import Document, DocumentVersion, EvidenceSpan, Workspace
 from app.models.mission import (
     Mission,
     MissionPlan,
@@ -118,6 +117,13 @@ async def create_mission(
         return err(403, "forbidden", "Forbidden for role.", rid)
     if body.autonomy_level not in ("ASSISTED", "SUPERVISED", "GUARDED"):
         return err(422, "validation_error", "Unknown autonomy level.", rid)
+    if body.deadline:
+        from datetime import datetime
+
+        try:
+            datetime.fromisoformat(body.deadline.replace("Z", "+00:00"))
+        except ValueError:
+            return err(422, "validation_error", "deadline must be an ISO date.", rid)
     await must_member(session, principal, body.workspace_id)
     m = Mission(
         tenant_id=principal.tenant_id,
@@ -156,11 +162,18 @@ async def list_missions(
     if state:
         q = q.where(Mission.state == state)
     rows = (await session.execute(q)).scalars().all()
-    # Membership lives in workspace JSON; filter here.
-    out = []
-    for m in rows:
-        if await is_member(session, principal, m.workspace_id):
-            out.append(_dto(m))
+    # Membership lives in workspace JSON; load member workspaces ONCE (B38)
+    # instead of one is_member query per mission.
+    ws_q = await session.execute(
+        select(Workspace).where(Workspace.tenant_id == principal.tenant_id)
+    )
+    member_ws = {
+        w.id
+        for w in ws_q.scalars().all()
+        if "Admin" in principal.roles
+        or principal.user_id in [mm.get("user_id") for mm in (w.members or [])]
+    }
+    out = [_dto(m) for m in rows if m.workspace_id in member_ws]
     return ok({"missions": out}, get_request_id(request))
 
 
@@ -189,6 +202,13 @@ async def patch_mission(
     rid = get_request_id(request)
     if not set(principal.roles) & WRITERS:
         return err(403, "forbidden", "Forbidden for role.", rid)
+    if body.deadline:
+        from datetime import datetime
+
+        try:
+            datetime.fromisoformat(body.deadline.replace("Z", "+00:00"))
+        except ValueError:
+            return err(422, "validation_error", "deadline must be an ISO date.", rid)
     try:
         m = await must_mission(session, principal, mission_id)
     except Exception as e:
@@ -274,6 +294,14 @@ async def _gate_context(
             if args_overlap_flagged(t.args_json or {}, texts):
                 t.status = "blocked"
                 quarantine_ok = False
+    # idempotency_ok derived from real receipts (B45): every stored receipt
+    # carries its idempotency key. blocking_conflicts stays 0 until
+    # concurrent-correction conflicts are recorded (the three_way_diff
+    # module needs a base/mine/theirs structure corrections don't track yet).
+    receipt_events = [
+        e for e in await rows_for(session, TimelineEvent, m.id) if e.kind == "action_receipt"
+    ]
+    idem_ok = all((e.payload or {}).get("idempotency_key") for e in receipt_events)
     return GateContext(
         title=bool(m.title),
         workspace=bool(m.workspace_id),
@@ -293,11 +321,14 @@ async def _gate_context(
         candidate_scenario=bool(cands),
         savings_reproducible=bool(cands),
         brief_generated=("brief_generated" in kinds),
-        ladders_in_policy=("brief_generated" in kinds),
+        # Ladders were computed by the drafts API, which enforces the
+        # policy matrix (walk-away is a hard wall): the real signal is the
+        # draft.created event, not brief_generated (B45).
+        ladders_in_policy=("draft.created" in kinds),
         quorum_met=quorum,
         payload_hash_match=quorum,
         actions_settled=("actions_settled" in kinds),
-        idempotency_ok=True,
+        idempotency_ok=idem_ok,
         report_exported=("report_exported" in kinds),
         audit_complete=True,
         roles=principal.roles,
@@ -315,6 +346,10 @@ async def advance_mission(
     rid = get_request_id(request)
     if not set(principal.roles) & WRITERS:
         return err(403, "forbidden", "Forbidden for role.", rid)
+    if body.waiver and not (set(principal.roles) & {"ComplianceReviewer", "Admin"}):
+        # B46: waivers are Compliance-gated — any writer can never bypass
+        # the intake requirement with a waiver flag.
+        return err(403, "waiver_denied", "Waivers need Compliance sign-off.", rid)
     try:
         m = await must_mission(session, principal, mission_id)
     except Exception as e:
@@ -389,7 +424,12 @@ async def upload_document(
         m = await must_mission(session, principal, mission_id)
     except Exception as e:
         return not_found(request, e)
-    content = await file.read()
+    # B27: read with a byte cap — the size check happens during the read,
+    # never after the whole file is in memory.
+    max_upload = 25 * 1024 * 1024
+    content = await file.read(max_upload + 1)
+    if len(content) > max_upload:
+        return err(413, "payload_too_large", "Upload exceeds 25 MB.", rid)
     verdict = validate_upload(file.filename or "upload.bin", file.content_type or "", content)
     doc = Document(
         tenant_id=m.tenant_id,

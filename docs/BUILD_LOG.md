@@ -4,6 +4,70 @@
 > how it was checked, and what is still open. Anything that bends the brain
 > gets an ADR link, not a quiet edit.
 
+## 2026-09-25 — Full-repo audit (232 findings) + six fix waves + Slice 15 design system
+
+Four parallel deep audits (backend, frontend, engine+tests, infra) produced
+232 raw findings → 160 deduplicated fix units, all tracked in `bugs/`
+(FINDINGS.md + one file per area, checkboxed). Fixed in six waves:
+
+- **Wave 1 — Infra/CI** (bugs/04): CI now really runs dep-scan (`pip install -e .`
+  before `pip-audit`), npm audit (prod+dev), web ESLint, and coverage
+  (pytest-cov); compose `env_file` is optional so `docker compose build` works;
+  redis got a health gate; actions pinned to SHAs; caching + concurrency +
+  per-job timeouts + least-privilege permissions; all three Dockerfiles run
+  non-root with prod-only deps, `npm ci`, and a standalone multi-stage web
+  image; loopback port binds + healthchecks + restart policies + pinned
+  images; dependabot.yml added; `.env.example` values blanked with unused keys
+  marked; tsconfig hardened (`noUncheckedIndexedAccess`).
+- **Wave 2 — Engine math** (bugs/03): per-box pricing honored via `price_uom`
+  (ADR-0005 — the old math silently inflated 24×); duplicate-line flagging +
+  `valid_until` expiry implemented; risk band StopIteration crash fixed;
+  scenario_opt rejects negative costs / `max_suppliers=0` / fractional
+  capacities; naive-datetime FX staleness fixed; three-way diff uses `base`;
+  ladder rungs never overshoot below target (last rung = target exactly);
+  savings baseline order-independent; reverse FX pairs invert; deterministic
+  rank tie-breaks; tool registry handlers wired to real engine math; CSV/XLSX
+  exports hardened (key union + formula-injection neutralization).
+- **Wave 3 — Backend** (bugs/01): worker pipeline wired (acknowledge enqueues
+  tasks); task select pins plan_version + unique index (pos_003); failed runs
+  roll back partial results and never replay; evidence refs persist with real
+  SourceLink ids; quarantine re-scans corrections; backward transitions
+  role-gated; 500-class faults never masked as 404; dual control structural
+  (managers out of finance/compliance lanes); production refuses to boot
+  without OIDC; dev tokens hashed (seed repairs plaintext); JWKS fetched off
+  the event loop with negative caching; upload byte cap + full-archive macro
+  scan + filename sanitization; span documents validated (clean, in-mission);
+  per-IP rate limiting; 422 envelope on malformed bodies; audit chain
+  lock + ordering + full hashes + `/audit/verify`; healthz probes DB/Redis;
+  S3 upload implemented; suppliers/profile/ai-jobs/notifications endpoints.
+- **Wave 4 — Frontend** (bugs/02): Tailwind 4 design system (tokens, light+
+  dark with contrast-fixed tones), Inter + IBM Plex Mono via next/font,
+  persistent app shell (sidebar + topbar + theme toggle + user chip), Screen
+  v2 (all nine states with skeletons/banners, linked breadcrumbs, wired
+  primary buttons), command palette mounted globally (mission-aware, arrow
+  keys, "/" focus, focus return), evidence drawer (focus trap, escape, error
+  surface, per-span reset), real screens: Dashboard, Login (+persona
+  quick-select), mission Overview + shared mission nav (14 screens one click
+  away), Analytics, Search, Workspaces, Suppliers directory + profile,
+  AI Runs, Documents, Reports, Notifications, Settings index; api-client
+  hardened (text-first decode, shared error mapping, 401 → token clear +
+  /login, missing client methods); error boundaries + not-found + loading.
+- **Wave 5 — Tests** (bugs/03): expiry + terminal-decide golden tests,
+  monotonic-backoff pin, ladder rung/bounds vectors, engine edge vectors
+  (per-box, ties, composite-101, reverse FX, naive FX, negative costs),
+  500/422 envelope pins with a crashing route, circuit-breaker persistence.
+- **Wave 6 — Verification**: ruff + format clean, `mypy --strict` clean,
+  `pytest` 59 green, `tsc` + `next build` + `vitest` green, Playwright 3/3
+  (smoke, 360px approval, full W1→W8) with every e2e hook preserved.
+
+Deferred with rationale (checkboxed `[~]` in bugs/): full DateTime-column
+migration (schema change staged with the deploy), AI provider surface in the
+request path, blocking_conflicts/audit_complete gates (need a
+concurrent-correction structure), fixture-name alignment, tool-pin raises.
+
+Checks: as listed in Wave 6. The e2e now runs against a sqlite-backed seeded
+API (two-server boot); staging (issue #8) remains the ops item.
+
 ## 2026-09-24 — Brutal-audit fix 1 of N: server-computed award value
 
 The self-audit's finding #1 was real: the approval lanes for an AWARD

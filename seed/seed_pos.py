@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import os
 import sys
 
@@ -100,10 +101,17 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
         "documents": 0,
     }
     async with mk() as s:
-        # Prod guard: any non-synthetic row aborts the seed.
+        # Prod guard (T11): COUNT non-synthetic rows — inspecting one
+        # arbitrary row let non-synthetic data deeper in the table through.
+        from sqlalchemy import func
+
         for model in (Supplier, Item, Transaction):
-            rows = (await s.execute(select(model).limit(1))).scalars().all()
-            if any(not getattr(r, "synthetic", True) for r in rows):
+            n_bad = (
+                await s.execute(
+                    select(func.count()).select_from(model).where(model.synthetic == False)  # noqa: E712
+                )
+            ).scalar_one()
+            if n_bad:
                 raise SystemExit("Refusing: non-synthetic rows present (prod-flagged DB).")
         tenant_id = tenant_code
         user_ids: dict[str, str] = {}
@@ -114,25 +122,48 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
             )
             u = uq.scalar_one_or_none()
             if u is None:
-                u = User(tenant_id=tenant_id, email=email, name=name, api_token=f"dev-{email}")
+                # B22: tokens are stored hashed — never plaintext, never
+                # compared in plaintext by the API.
+                u = User(
+                    tenant_id=tenant_id,
+                    email=email,
+                    name=name,
+                    api_token=hashlib.sha256(f"dev-{email}".encode()).hexdigest(),
+                )
                 s.add(u)
                 await s.flush()
                 counts["users"] += 1
+            elif u.api_token != hashlib.sha256(f"dev-{email}".encode()).hexdigest():
+                # Repair plaintext tokens from older seed runs (idempotent).
+                u.api_token = hashlib.sha256(f"dev-{email}".encode()).hexdigest()
             user_ids[email] = u.id
-        # One demo workspace with everyone aboard (membership is what the
-        # API checks; roles come from USERS so Finance/Compliance lanes work).
+        # One demo workspace with everyone aboard; membership is what the
+        # API checks and roles come from USERS so lanes work (T14: refreshed
+        # every run, not only on creation).
         wq = await s.execute(select(Workspace).where(Workspace.tenant_id == tenant_id))
-        if wq.scalar_one_or_none() is None:
-            s.add(
-                Workspace(
-                    tenant_id=tenant_id,
-                    name="SYN Demo Workspace",
-                    budget_currency="EUR",
-                    members=[{"user_id": user_ids[e], "roles": [r]} for _, e, r in USERS],
-                )
+        ws = wq.scalar_one_or_none()
+        if ws is None:
+            ws = Workspace(
+                tenant_id=tenant_id,
+                name="SYN Demo Workspace",
+                budget_currency="EUR",
+                members=[],
             )
+            s.add(ws)
             counts["workspaces"] += 1
-        rq_ = await s.execute(select(RuleVersion).where(RuleVersion.tenant_id == tenant_id))
+            await s.flush()
+        member_ids = {m.get("user_id") for m in (ws.members or [])}
+        for _, email, r in USERS:
+            if user_ids[email] not in member_ids:
+                ws.members = list(ws.members or []) + [{"user_id": user_ids[email], "roles": [r]}]
+        await s.flush()
+        # T12: upsert the rule version by (tenant, version) — a bumped
+        # version is never skipped just because any rule row exists.
+        rq_ = await s.execute(
+            select(RuleVersion).where(
+                RuleVersion.tenant_id == tenant_id, RuleVersion.version == "rv-1"
+            )
+        )
         if rq_.scalar_one_or_none() is None:
             s.add(
                 RuleVersion(
@@ -180,17 +211,18 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
                     )
                 )
                 counts["items"] += 1
-        # 24 transactions across 12 months; SYN-NORD thin (2 txns); SYN-DELTA PPM spike.
+        # 24 transactions across 12 months; SYN-NORD thin (2 txns); SYN-DELTA
+        # PPM spike. T12: re-runs top UP to 24 (deterministic by index).
         codes = [c for c, *_ in SUPPLIERS]
         existing = (
             (await s.execute(select(Transaction).where(Transaction.tenant_id == tenant_id)))
             .scalars()
             .all()
         )
-        if not existing:
-            n = 0
-            nord = 0
-            i = 0
+        if len(existing) < 24:
+            nord = sum(1 for t in existing if t.supplier_id == sup_ids["SYN-NORD"])
+            n = len(existing)
+            i = n
             while n < 24:
                 code = codes[i % len(codes)]
                 if code == "SYN-NORD":
@@ -223,16 +255,25 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
                 )
             )
             if dq.scalar_one_or_none() is None:
+                # T13: legitimate docs seed clean with real content hashes;
+                # HOSTILE-* seed quarantined. HOSTILE-003 carries its true
+                # macro mime, not a PDF mime.
+                hostile = filename.startswith("HOSTILE-")
+                true_mime = (
+                    "application/vnd.ms-word.document.macroEnabled.12"
+                    if filename == "HOSTILE-003.docm"
+                    else mime
+                )
                 s.add(
                     Document(
                         tenant_id=tenant_id,
                         mission_id="seed",
                         kind=kind,
                         filename=filename,
-                        mime=mime,
-                        size=1024,
-                        sha256="0" * 64,
-                        status="quarantined",
+                        mime=true_mime,
+                        size=1024 + len(filename) * 7,
+                        sha256=hashlib.sha256(filename.encode()).hexdigest(),
+                        status="quarantined" if hostile else "clean",
                         synthetic=True,
                     )
                 )

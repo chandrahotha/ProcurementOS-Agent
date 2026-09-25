@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from typing import Any
@@ -10,6 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.foundation import AuditEvent
+
+# Per-tenant in-process lock (B32): concurrent requests in one worker can
+# never fork the chain. Cross-process (multi-worker) interleave is rare and
+# additionally ordered by (created_at, id) so the head is unambiguous.
+_tenant_locks: dict[str, asyncio.Lock] = {}
 
 
 def _canon(payload: dict[str, Any]) -> str:
@@ -39,41 +45,44 @@ async def append_event(
     reason: str | None = None,
     source: str = "api",
 ) -> AuditEvent:
-    # prev chain head: latest event_hash for tenant (fallback GENESIS)
-    hq = await session.execute(
-        select(AuditEvent.event_hash)
-        .where(AuditEvent.tenant_id == tenant_id)
-        .order_by(AuditEvent.created_at.desc())
-        .limit(1)
-    )
-    prev = hq.scalar_one_or_none() or "GENESIS"
-    before_h = payload_hash(before or {})
-    after_h = payload_hash(after or {})
-    body = {
-        "tenant": tenant_id,
-        "action": action,
-        "actor": actor_id,
-        "mission": mission_id,
-        "object": [object_type, object_id],
-        "before": before_h,
-        "after": after_h,
-        "request": request_id,
-    }
-    ev = AuditEvent(
-        tenant_id=tenant_id,
-        actor_id=actor_id,
-        mission_id=mission_id,
-        request_id=request_id,
-        object_type=object_type,
-        object_id=object_id,
-        action=action,
-        before_hash=before_h,
-        after_hash=after_h,
-        prev_hash=prev,
-        event_hash=chain_hash(prev, body),
-        reason=reason,
-        source=source,
-    )
-    session.add(ev)
-    await session.flush()
-    return ev
+    # prev chain head: latest event_hash for tenant (fallback GENESIS),
+    # ordered by (created_at, id) so same-timestamp events never fork (B32).
+    lock = _tenant_locks.setdefault(tenant_id, asyncio.Lock())
+    async with lock:
+        hq = await session.execute(
+            select(AuditEvent.event_hash)
+            .where(AuditEvent.tenant_id == tenant_id)
+            .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+            .limit(1)
+        )
+        prev = hq.scalar_one_or_none() or "GENESIS"
+        before_h = payload_hash(before or {})
+        after_h = payload_hash(after or {})
+        body = {
+            "tenant": tenant_id,
+            "action": action,
+            "actor": actor_id,
+            "mission": mission_id,
+            "object": [object_type, object_id],
+            "before": before_h,
+            "after": after_h,
+            "request": request_id,
+        }
+        ev = AuditEvent(
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            mission_id=mission_id,
+            request_id=request_id,
+            object_type=object_type,
+            object_id=object_id,
+            action=action,
+            before_hash=before_h,
+            after_hash=after_h,
+            prev_hash=prev,
+            event_hash=chain_hash(prev, body),
+            reason=reason,
+            source=source,
+        )
+        session.add(ev)
+        await session.flush()
+        return ev

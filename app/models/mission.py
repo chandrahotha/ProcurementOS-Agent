@@ -71,6 +71,18 @@ class MissionTask(TenantScoped):
     evidence_refs: Mapped[list[Any]] = mapped_column(JSON, default=list)
     activity_log: Mapped[list[Any]] = mapped_column(JSON, default=list)
 
+    # Keys repeat across plan versions but are unique within one version:
+    # the task select pins plan_version and this index backstops it (B2).
+    __table_args__ = (
+        Index(
+            "ix_pos_task_mission_version_key",
+            "mission_id",
+            "plan_version",
+            "key",
+            unique=True,
+        ),
+    )
+
 
 class MissionRun(TenantScoped):
     __tablename__ = f"{PREFIX}mission_run"

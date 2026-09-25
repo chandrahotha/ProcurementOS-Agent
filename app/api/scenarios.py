@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.common import aud, err, log_timeline, must_mission, not_found, rows_for
@@ -14,7 +15,7 @@ from app.auth.roles import ADMIN, BUYER, MANAGER
 from app.core.envelope import ok
 from app.core.request_id import get_request_id
 from app.db import get_session
-from app.models.mission import CostResult, Mission, ScenarioResult, SourcingResult
+from app.models.mission import CostResult, Mission, ScenarioResult, SourcingResult, TimelineEvent
 
 router = APIRouter()
 WRITE_ROLES = {BUYER, MANAGER, ADMIN}
@@ -50,7 +51,21 @@ async def _store_scenario(
             rid,
             {"notes": r["notes"]},
         )
-    baseline = sum(o["unit_cost_minor"] * body.demand for o in body.offers[:1])
+    # Baseline (B9/E8): the cheapest feasible single-supplier cost —
+    # capacity-aware and input-order independent. When no single supplier
+    # covers demand, the conservative upper bound (costliest option at full
+    # demand) keeps savings meaningful and never negative from split wins.
+    caps: dict[str, int] = {}
+    for o in body.offers:
+        try:
+            caps[str(o.get("supplier_id"))] = int(o.get("capacity", 0))
+        except (TypeError, ValueError):
+            caps[str(o.get("supplier_id"))] = 0
+    singles = [o for o in body.offers if caps.get(str(o.get("supplier_id")), 0) >= body.demand]
+    if singles:
+        baseline = min(int(o["unit_cost_minor"]) for o in singles) * body.demand
+    else:
+        baseline = max(int(o["unit_cost_minor"]) for o in body.offers) * body.demand
     row = ScenarioResult(
         tenant_id=m.tenant_id,
         mission_id=m.id,
@@ -209,9 +224,9 @@ async def decision_brief(
     except Exception as e:
         return not_found(request, e)
     rid = get_request_id(request)
-    costs = await rows_for(session, CostResult, m.id)
-    sourcing = await rows_for(session, SourcingResult, m.id)
-    scenarios = await rows_for(session, ScenarioResult, m.id)
+    costs = await rows_for(session, CostResult, m.id, tenant_id=m.tenant_id, limit=500)
+    sourcing = await rows_for(session, SourcingResult, m.id, tenant_id=m.tenant_id, limit=500)
+    scenarios = await rows_for(session, ScenarioResult, m.id, tenant_id=m.tenant_id, limit=500)
     if not costs and not sourcing:
         return err(422, "brief_empty", "No certified results to brief on yet.", rid)
     ranked = sorted(costs, key=lambda r: r.tco_minor)
@@ -239,23 +254,36 @@ async def decision_brief(
         "evidence refs or a recorded waiver.",
         "cited_lines": [wline, cline],
     }
-    await log_timeline(
-        session,
-        tenant_id=m.tenant_id,
-        mission_id=m.id,
-        kind="brief_generated",
-        payload={"winner": brief["winner_supplier_id"]},
-        actor_id=principal.user_id,
-    )
-    await aud(
-        session,
-        request,
-        principal,
-        "brief_generated",
-        m,
-        "brief",
-        None,
-        after={"winner": brief["winner_supplier_id"]},
-    )
-    await session.commit()
+    # The brief is computed on demand from certified rows (B9): the
+    # brief_generated timeline/audit events persist ONCE per mission — not
+    # per read — so the gate signal stays real without unbounded growth on
+    # every GET.
+    kinds = {
+        k
+        for k in (
+            await session.execute(
+                select(TimelineEvent.kind).where(TimelineEvent.mission_id == m.id)
+            )
+        ).scalars()
+    }
+    if "brief_generated" not in kinds:
+        await log_timeline(
+            session,
+            tenant_id=m.tenant_id,
+            mission_id=m.id,
+            kind="brief_generated",
+            payload={"winner": brief["winner_supplier_id"]},
+            actor_id=principal.user_id,
+        )
+        await aud(
+            session,
+            request,
+            principal,
+            "brief_generated",
+            m,
+            "brief",
+            None,
+            after={"winner": brief["winner_supplier_id"]},
+        )
+        await session.commit()
     return ok(brief, rid)

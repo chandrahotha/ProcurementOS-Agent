@@ -81,7 +81,8 @@ through the outage); recovery replays the queue without recomputing math.
 ## Known gaps (honest)
 
 - Workers drain on live Redis in staging — not yet exercised.
-- Styling is hand-rolled token CSS implementing the 06 §2 contract; the
-  Tailwind/shadcn pass is tracked on the roadmap.
 - Real IdP (OIDC) wired but untested against an actual issuer — staging
   item (issue #8).
+- The full findings ledger from the 2026-09-25 repo audit lives in `bugs/`
+  (148 fixed, 12 deferred with rationale); the Tailwind 4 design system and
+  app shell shipped as Slice 15.

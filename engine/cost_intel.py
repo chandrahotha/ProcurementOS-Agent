@@ -12,12 +12,19 @@ from typing import Any
 from engine.money import FxRate, convert_minor
 
 
+def _parse_dt(value: str) -> datetime:
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)  # naive timestamps are treated as UTC
+    return dt
+
+
 def _stale(quoted_at: str, tolerance_days: int, now: str | None = None) -> bool:
     try:
-        q = datetime.fromisoformat(quoted_at.replace("Z", "+00:00"))
-        n = datetime.fromisoformat(now.replace("Z", "+00:00")) if now else datetime.now(UTC)
+        q = _parse_dt(quoted_at)
+        n = _parse_dt(now) if now else datetime.now(UTC)
         return (n - q).days > tolerance_days
-    except Exception:
+    except (ValueError, TypeError):
         return True
 
 

@@ -65,7 +65,7 @@ async def list_evidence(
         m = await must_mission(session, principal, mission_id)
     except Exception as e:
         return not_found(request, e)
-    q = select(EvidenceSpan).where(EvidenceSpan.mission_id == m.id)
+    q = select(EvidenceSpan).where(EvidenceSpan.mission_id == m.id).limit(500)
     if flagged is not None:
         q = q.where(EvidenceSpan.instruction_flag.is_(flagged))
     spans = (await session.execute(q)).scalars().all()
@@ -89,7 +89,32 @@ async def record_spans(
     except Exception as e:
         return not_found(request, e)
     out = []
+    from app.models.foundation import Document
+
     for cand in body:
+        # B29: a span citing a real document must cite one of THIS mission
+        # with clean status — rejected/quarantined/foreign docs can never
+        # back evidence, so the coverage gate stays honest. The explicit
+        # "manual-entry" sentinel remains the documented outage fallback
+        # (user-attested values, labeled manual, never extractor output).
+        if cand.document_id != "manual-entry":
+            d = (
+                await session.execute(
+                    select(Document).where(
+                        Document.id == cand.document_id,
+                        Document.mission_id == m.id,
+                        Document.tenant_id == m.tenant_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if d is None or d.status != "clean":
+                await session.rollback()
+                return err(
+                    422,
+                    "document_invalid",
+                    f"span document {cand.document_id!r} is missing, foreign, or not clean",
+                    rid,
+                )
         flag = scan(cand.quoted_text or cand.field_value)
         s = EvidenceSpan(
             tenant_id=m.tenant_id,
@@ -102,6 +127,7 @@ async def record_spans(
             paragraph=cand.paragraph,
             confidence=cand.confidence,
             instruction_flag=flag["flagged"],
+            extractor_version="manual-v1" if cand.document_id == "manual-entry" else "1.0.0",
         )
         session.add(s)
         await session.flush()
@@ -165,6 +191,10 @@ async def correct_span(
         return err(404, "not_found", "No such span.", rid)
     before = {"field_value": s.field_value}
     s.field_value = body.field_value
+    # B10: corrections are re-scanned — hostile text injected via the
+    # correction endpoint is quarantined like any other span.
+    flag = scan(body.field_value or s.quoted_text)
+    s.instruction_flag = flag["flagged"]
     await aud(
         session,
         request,
@@ -176,6 +206,17 @@ async def correct_span(
         after={"field_value": body.field_value, "before": before},
         reason=body.reason or None,
     )
+    if flag["flagged"]:
+        await aud(
+            session,
+            request,
+            principal,
+            "hostile_span_quarantined",
+            m,
+            "evidence_span",
+            s.id,
+            reason=f"patterns: {flag['hits']}",
+        )
     await log_timeline(
         session,
         tenant_id=m.tenant_id,

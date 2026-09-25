@@ -1,11 +1,21 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS deps
 WORKDIR /srv
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e ".[dev]"
+# Runtime deps only: dev tooling (pytest/ruff/mypy) never ships to prod.
+RUN pip install --no-cache-dir -e .
+
+FROM python:3.12-slim AS runtime
+WORKDIR /srv
+COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=deps /usr/local/bin /usr/local/bin
+COPY pyproject.toml ./
 COPY app/ ./app/
 COPY alembic/ ./alembic/
+COPY alembic.ini ./
 COPY engine/ ./engine/
 COPY worker/ ./worker/
 COPY seed/ ./seed/
+RUN useradd --system --create-home --uid 10001 pos && chown -R pos:pos /srv
+USER pos
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -72,6 +72,15 @@ def check_transition(frm: str, to: str, ctx: GateContext) -> tuple[bool, str]:
     if NEXT.get(frm) == to:
         return _entry(to, ctx)
     if (frm, to) in BACKWARD_OK:
+        # Backward moves carry at least the role check the forward edge of
+        # the same edge requires (B11): analysis->evidence needs plan-ack
+        # roles; approval->negotiation needs Manager.
+        if (frm, to) == ("analysis", "evidence"):
+            if not _has(ctx.roles, "ProcurementManager", "Buyer", "Admin"):
+                return False, "plan ack requires Manager (or Buyer w/ pre-approved template)"
+        if (frm, to) == ("approval", "negotiation"):
+            if not _has(ctx.roles, "ProcurementManager"):
+                return False, "scenario candidate requires Manager"
         return True, "backward-as-new-plan-version"
     return False, f"illegal {frm}->{to}"
 
@@ -87,9 +96,12 @@ def _entry(to: str, c: GateContext) -> tuple[bool, str]:
             return False, "plan v1 must be acknowledged; DAG acyclic + allowlisted tools"
         return True, "ok"
     if to == "analysis":
-        gate = (c.coverage_pct >= 80 and c.blocking_conflicts == 0) or c.coverage_waived
-        if not gate:
-            return False, "coverage >= 80% with 0 blocking conflicts, or Compliance waiver"
+        # Coverage and conflicts are independent gates (T20): a waiver
+        # admits low coverage, never blocking conflicts.
+        if not (c.coverage_pct >= 80 or c.coverage_waived):
+            return False, "coverage >= 80%, or Compliance waiver"
+        if c.blocking_conflicts > 0:
+            return False, "blocking conflicts must be resolved"
         if not c.hostile_quarantined:
             return False, "hostile-span quarantine unverified"
         return True, "ok"

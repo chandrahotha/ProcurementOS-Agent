@@ -66,8 +66,10 @@ async def certified_award_value(
             CostResult.tenant_id == tenant_id,
             CostResult.mission_id == mission_id,
             CostResult.supplier_id == supplier_id,
+            # Stale-FX TCO never certifies an AWARD value (fail closed).
+            CostResult.stale_flag.is_(False),
         )
-        .order_by(CostResult.created_at.desc())
+        .order_by(CostResult.created_at.desc(), CostResult.id.desc())
         .limit(1)
     )
     row = (await session.execute(q)).scalar_one_or_none()
@@ -118,7 +120,11 @@ async def lanes_for(
         )
         threshold = await rule_threshold(session, tenant_id)
     else:
-        value = int(payload.get("value_minor", 0) or 0)
+        raw = payload.get("value_minor", 0)
+        try:
+            value = int(raw or 0)
+        except (TypeError, ValueError):
+            raise ApprovalError("value_minor must be a number") from None
         threshold = DEFAULT_THRESHOLD_MINOR
     return required_lanes(action_class, value, threshold)
 
@@ -181,6 +187,10 @@ async def decide(
     row = q.scalar_one_or_none()
     if row is None:
         raise ApprovalError("approval not found")
+    if row.status != "pending":
+        # Decisions are terminal: an approved/rejected/expired row can never
+        # be flipped by a later decide call.
+        raise ApprovalError(f"approval already {row.status}; decisions are terminal")
     if "Admin" in principal_roles:
         raise ApprovalError("Admin is config-only and cannot approve")
     allowed = R.LANE_ROLES.get(row.lane, [])
@@ -228,6 +238,9 @@ async def quorum_met(
             payload=payload,
         )
     except ApprovalError:
+        return False
+    if not lanes:
+        # Unknown action class: an empty lane set must never satisfy quorum.
         return False
     ph = payload_hash(payload)
     q = await session.execute(

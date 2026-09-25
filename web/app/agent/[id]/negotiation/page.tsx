@@ -7,6 +7,7 @@ import { Screen } from "@/components/Screen";
 import { AdvancePanel } from "@/components/AdvancePanel";
 import { api } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
+import { Card, EmptyState, Field, StateBadge } from "@/components/ui";
 
 type Ladder = { opening: number; target: number; walk_away: number;
   concessions: number[] };
@@ -38,39 +39,49 @@ export default function NegotiationPage(props: { params: Promise<{ id: string }>
   }
 
   return (
-    <Screen code="P11" title="Negotiation Studio" breadcrumb="Mission / Negotiation"
-      primary="Draft" state="success">
-      <div className="gate-grid">
-        <div className="row">
-          <label>Candidate cost (minor)
-            <input value={candidate} onChange={(e) => setCandidate(e.target.value)} />
-          </label>
-          <label>BATNA cost (minor)
-            <input value={batna} onChange={(e) => setBatna(e.target.value)} />
-          </label>
+    <Screen code="P11" title="Negotiation Studio" breadcrumb={[{ label: "Mission Control", href: "/agent" }, { label: "Negotiation" }]}
+      primary="Draft" onPrimary={() => void draft()} status="Ladder rungs never overshoot; walk-away is a hard wall" state="success">
+      <Card className="max-w-xl">
+        <div className="gate-grid">
+          <div className="row">
+            <Field label="Candidate cost (minor)">
+              <input value={candidate} onChange={(e) => setCandidate(e.target.value)} />
+            </Field>
+            <Field label="BATNA cost (minor)">
+              <input value={batna} onChange={(e) => setBatna(e.target.value)} />
+            </Field>
+          </div>
+          <Field label="Draft price (minor)">
+            <input value={price} onChange={(e) => setPrice(e.target.value)} />
+          </Field>
+          <Field label="Message text">
+            <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} />
+          </Field>
+          <div className="row">
+            <button type="button" className="primary" onClick={() => void draft()}>Draft inside ladder</button>
+          </div>
+          {note ? <p role="status"><StateBadge state="info" /> {note}</p> : null}
         </div>
-        <label>Draft price (minor)
-          <input value={price} onChange={(e) => setPrice(e.target.value)} />
-        </label>
-        <label>Message text
-          <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} />
-        </label>
-        <button type="button" onClick={() => void draft()}>Draft inside ladder</button>
-        {note ? <p role="status">{note}</p> : null}
-      </div>
+      </Card>
       {ladder ? (
-        <table>
-          <thead><tr><th>Opening</th><th>Target</th><th>Walk-away</th><th>Concessions</th></tr></thead>
-          <tbody>
-            <tr>
-              <td className="mono">{ladder.opening}</td>
-              <td className="mono">{ladder.target}</td>
-              <td className="mono">{ladder.walk_away}</td>
-              <td className="mono">{ladder.concessions.join(" → ")}</td>
-            </tr>
-          </tbody>
-        </table>
-      ) : null}
+        <div className="table-card">
+          <table>
+            <caption className="sr-only">Negotiation ladder</caption>
+            <thead><tr><th scope="col">Opening</th><th scope="col">Target</th><th scope="col">Walk-away</th><th scope="col">Concessions</th></tr></thead>
+            <tbody>
+              <tr>
+                <td data-label="Opening" className="mono">{ladder.opening}</td>
+                <td data-label="Target" className="mono">{ladder.target}</td>
+                <td data-label="Walk-away" className="mono">{ladder.walk_away}</td>
+                <td data-label="Concessions" className="mono">{ladder.concessions.join(" → ")}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyState icon="chart" title="No ladder yet"
+          body="Draft inside the ladder — the opening, target, and walk-away compute from the candidate and BATNA costs." />
+      )}
       <AdvancePanel missionId={id} toState="approval" label="Advance to approval (Manager)"
         onAdvanced={() => setNote("State: approval.")} />
     </Screen>

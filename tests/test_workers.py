@@ -35,6 +35,11 @@ def test_backoff_grows_and_caps():
     for i in range(8):
         assert 0 <= backoff(i) <= 300
     assert backoff(100) == 300
+    # Monotonic growth toward the cap is pinned (T4): a constant backoff
+    # would pass the range check but never the growth check.
+    seq = [backoff(i) for i in range(6)]
+    assert seq == sorted(seq)
+    assert all(next_ > prev for prev, next_ in zip(seq, seq[1:], strict=False))
     assert should_quarantine(MAX_ATTEMPTS) is True
     assert should_quarantine(MAX_ATTEMPTS - 1) is False
 

@@ -6,43 +6,56 @@ unchecked box in its section.
 
 ## Product
 
-- [x] W1→W8 completes on synthetic seed (2026-09-24) — `tests/test_api.py`
+- [x] W1→W8 completes on synthetic seed (2026-09-25) — `tests/test_api.py`
       (HTTP walk) and `web/e2e/full-flow.spec.ts` (browser walk), both in CI.
-- [x] P01–P16 + G01–G20 reachable (2026-09-24) — `next build` route table;
-      P02–P16, G13, G16 wired to live data; remaining G screens are shell
-      views pending their features.
+- [x] P01–P16 + G01–G20 reachable (2026-09-25) — `next build` route table;
+      P02–P16, G13, G16 wired to live data; Dashboard/Login/Analytics/Search/
+      Workspaces/Suppliers/Notifications/AI-Runs wired (2026-09-25); the
+      Slice 15 design system (Tailwind 4 + app shell) ships the styled UI.
 - [ ] Seeded demo (8-minute + 2–4-minute cuts) rehearsed, both closing on the
       G13 audit inspection — pending staging (issue #8).
-- [x] Exports tenant-scoped with evidence appendix (2026-09-24) —
-      POS-EXP-01 deny case in `tests/test_api.py`; XLSX/PDF/CSV builders in
-      `app/api/runs_export.py`.
-- [x] Audit events present for all material mutations (2026-09-24) —
-      G13 wired; `tests/test_api.py` asserts the full walk lands in the trail.
+- [x] Exports tenant-scoped with evidence appendix (2026-09-25) —
+      POS-EXP-01 deny case in `tests/test_api.py`; every scope id
+      tenant-checked; XLSX/PDF/CSV builders in `app/api/runs_export.py`.
+- [x] Audit events present for all material mutations (2026-09-25) —
+      G13 wired with full hashes + `/audit/verify` chain re-walk;
+      `tests/test_api.py` asserts the full walk lands in the trail.
 
 ## Engineering
 
 - [x] lint · typecheck · unit · integration · E2E · build green
-      (2026-09-24) — ruff + format clean; `mypy --strict` clean (71 files);
-      `pytest` 42 passed incl. AGENT-001…004; `tsc` clean; `next build` green;
+      (2026-09-25) — ruff + format clean; `mypy --strict` clean (68 files);
+      `pytest` 59 passed incl. AGENT-001…004; `tsc` clean; `next build` green;
       `vitest` green; Playwright 3/3.
 
 ## Security
 
-- [x] Secrets absent (tree + history) (2026-09-24) — gitleaks in CI;
-      `.env.example` keys-only.
-- [x] Dependency scan clean (2026-09-24) — `pip-audit` and `npm audit`
+- [x] Secrets absent (tree + history) (2026-09-25) — gitleaks in CI;
+      `.env.example` values blanked, unused keys marked.
+- [x] Dependency scan clean (2026-09-25) — `pip-audit` and `npm audit`
       (prod + dev) report zero findings for project deps; jose→PyJWT,
-      ortools removed, Next 16.3.6 (ADRs 0002–0004).
-- [x] Upload-abuse suite (2026-09-24) — `tests/test_ingest.py`
-      (POS-SEC-02: extension/MIME/magic-byte/oversize/macro rejects).
-- [x] IDOR + tenant breakout (2026-09-24) — cross-tenant deny in
-      `tests/test_api.py`; object-level membership on every route.
-- [x] Prompt injection (AGENT-003) (2026-09-24) — hostile fixtures;
-      `tests/test_ingest.py` asserts zero mission mutation.
+      ortools removed, Next 16.3.6 (ADRs 0002–0004); python-multipart floor
+      raised above the ReDoS range; dep-scan now audits the installed project.
+- [x] Upload-abuse suite (2026-09-25) — `tests/test_ingest.py`
+      (POS-SEC-02: extension/MIME/magic-byte/oversize/macro rejects);
+      full-archive macro scan for OOXML + 25 MB cap during read + filename
+      sanitization + span-document validation.
+- [x] IDOR + tenant breakout (2026-09-25) — cross-tenant deny in
+      `tests/test_api.py` (authz layer itself pinned, T7); object-level
+      membership on every route; safe-404 for non-members.
+- [x] Prompt injection (AGENT-003) (2026-09-25) — hostile fixtures;
+      `tests/test_ingest.py` asserts zero mission mutation; corrections
+      re-scanned so injected text cannot evade quarantine (B10).
+- [x] Dual control (2026-09-25) — managers out of finance/compliance lanes
+      (structural, not advisory); unknown action class never satisfies
+      quorum; decisions terminal; `tests/test_foundation.py` pins the map.
 - [x] XSS posture — output-encoded React rendering; no
-      `dangerouslySetInnerHTML` on untrusted strings.
+      `dangerouslySetInnerHTML` on untrusted strings (the theme-init script
+      is a static trusted constant).
+- [x] Rate limits implemented (2026-09-25) — per-IP fixed-window on write
+      methods, 429 with the error envelope (`app/core/ratelimit.py`);
+      verified under load pending staging (issue #8).
 - [ ] SSRF suite against live webhook hosts — pending staging (issue #8).
-- [ ] Rate limits verified under load — pending staging (issue #8).
 
 ## AI
 

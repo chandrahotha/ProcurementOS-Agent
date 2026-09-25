@@ -30,10 +30,14 @@ REQUEST_ROLES: dict[str, list[str]] = {
     "run.replay": [MANAGER],
 }
 
-# approval lane -> roles allowed to DECIDE in that lane
+# approval lane -> roles allowed to DECIDE in that lane.
+# Managers are deliberately OUT of the finance and compliance lanes: AWARD
+# and CONTRACTUAL_COMMIT both require the managerial lane, so letting a
+# manager also decide finance/compliance would let one user self-approve a
+# dual-control action. Dual control is structural, not advisory.
 LANE_ROLES: dict[str, list[str]] = {
-    "finance": [FINANCE, MANAGER],
-    "compliance": [COMPLIANCE, MANAGER],
+    "finance": [FINANCE],
+    "compliance": [COMPLIANCE],
     "managerial": [MANAGER],
 }
 

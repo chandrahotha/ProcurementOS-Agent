@@ -1,8 +1,13 @@
 """Negotiation playbook engine (F26): deterministic ladders + BATNA math.
 
 Derived from scenario deltas: walk-away = BATNA cost, target = candidate
-savings share, opening = target + concession room. AI drafts strictly inside
-the ladder; send is gated (EXTERNAL_COMM approval).
+savings share, opening = target + concession room. Concession rungs span the
+opening->target range (never overshoot below target); the last rung lands
+exactly on target.
+
+Hard wall: a draft may aim anywhere at or below walk-away (a better deal than
+BATNA), never above it. The rungs are guidance for the draft; send is gated
+(EXTERNAL_COMM approval).
 """
 
 from __future__ import annotations
@@ -17,8 +22,9 @@ def ladder(candidate_cost_minor: int, batna_cost_minor: int, steps: int = 3) -> 
     target = min(candidate_cost_minor, batna_cost_minor)
     room = max(0, walk_away - target)
     opening = target + room // 2 if room else target
-    rung = room // steps if room else 0
-    concessions = [opening - i * rung for i in range(steps)]
+    span = opening - target
+    rung = span // (steps - 1) if span else 0
+    concessions = [opening - i * rung for i in range(steps - 1)] + [target]
     return {
         "opening": opening,
         "target": target,
@@ -29,10 +35,6 @@ def ladder(candidate_cost_minor: int, batna_cost_minor: int, steps: int = 3) -> 
 
 
 def draft_within_ladder(draft_price_minor: int, lad: dict[str, Any]) -> dict[str, Any]:
-    lo = min(lad["target"], lad["walk_away"])
-    hi = max(lad["opening"], lad["walk_away"], lad["target"])
-    ok = lo <= draft_price_minor <= hi or draft_price_minor == lad["target"]
-    # Drafts may aim below target (better deal); they must never exceed walk-away.
-    if draft_price_minor > lad["walk_away"]:
-        ok = False
+    # Drafts may aim below target (better deal); the hard wall is walk-away.
+    ok = 0 <= draft_price_minor <= lad["walk_away"]
     return {"within_bounds": ok, "ladder": lad, "draft_price_minor": draft_price_minor}

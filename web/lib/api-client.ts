@@ -1,6 +1,7 @@
 // Typed API client for every 05 endpoint. Envelope unwrapped; request_id
 // surfaced on errors. Token comes from localStorage (demo) — production
-// uses the OIDC session cookie via the route handlers.
+// uses the OIDC session cookie via the route handlers. A 401 clears the
+// token and routes to /login (F20).
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api/v1";
 
 export type ScreenState =
@@ -28,10 +29,31 @@ export class ApiError extends Error {
   }
 }
 
+// Shared error mapping (F19): 401/403 -> denied, everything else -> error.
+export function stateForError(e: unknown): "denied" | "error" {
+  if (e instanceof ApiError && (e.status === 401 || e.status === 403)) return "denied";
+  return "error";
+}
+
 export function verdictTone(verdict: string): "ok" | "warn" | "bad" {
   if (verdict === "ALLOW") return "ok";
   if (verdict === "NEEDS-APPROVAL") return "warn";
   return "bad";
+}
+
+function onAuthFailure(status: number): void {
+  if (status !== 401 || typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem("pos_token");
+  } catch {
+    /* storage unavailable */
+  }
+  if (!window.location.pathname.startsWith("/login")) {
+    // Intentional full navigation (non-render phase, fetch interceptor):
+    // clears stale credentials everywhere, not just the current tree.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.assign("/login");
+  }
 }
 
 async function call<T>(path: string, init: RequestInit, token?: string): Promise<T> {
@@ -43,20 +65,29 @@ async function call<T>(path: string, init: RequestInit, token?: string): Promise
   const isFile = (res.headers.get("Content-Type") ?? "").includes("application/")
     && !res.headers.get("Content-Type")?.includes("json");
   if (isFile && res.ok) return (await res.arrayBuffer()) as unknown as T;
-  const body = (await res.json()) as {
+  // Text-first + guarded decode (F17): a non-JSON error body (e.g. an HTML
+  // 502 from a proxy) becomes a real ApiError, never a raw SyntaxError.
+  const text = await res.text();
+  let body: {
     data?: T;
     error?: { code: string; message: string; details?: unknown };
     request_id?: string;
-  };
+  } = {};
+  try {
+    body = JSON.parse(text) as typeof body;
+  } catch {
+    /* non-JSON body handled below */
+  }
   if (!res.ok) {
+    if (res.status === 401) onAuthFailure(res.status);
     throw new ApiError(res.status, body.error?.code ?? "http_error",
       body.error?.message ?? `HTTP ${res.status}`, body.request_id ?? rid, body.error?.details);
   }
   return body.data as T;
 }
 
-const get = <T,>(path: string, token?: string, key?: string) =>
-  call<T>(path, { method: "GET", headers: key ? { "Idempotency-Key": key } : {} }, token);
+const get = <T,>(path: string, token?: string) =>
+  call<T>(path, { method: "GET" }, token);
 const post = <T,>(path: string, body: unknown, token?: string, key?: string) =>
   call<T>(path, {
     method: "POST",
@@ -69,6 +100,7 @@ const patch = <T,>(path: string, body: unknown, token?: string) =>
 export type Mission = {
   id: string; workspace_id: string; title: string; state: string;
   coverage_pct: number; autonomy_level: string; currency: string;
+  budget_cap_minor?: number;
 };
 
 type ScenarioOut = {
@@ -175,8 +207,27 @@ export const api = {
     post<{ verdict: string; tco_integrity: boolean }>(
       `/missions/${id}/runs/${rid}/replay`, {}, t),
   audit: (t?: string, limit?: number) =>
-    get<{ events: { id: string; action: string; object_type: string; mission_id: string | null; actor_id: string | null; request_id: string; reason: string | null; event_hash: string; at: string }[] }>(
+    get<{ events: { id: string; action: string; object_type: string; mission_id: string | null; actor_id: string | null; request_id: string; reason: string | null; event_hash: string; prev_hash?: string; at: string }[] }>(
       `/audit${limit ? `?limit=${limit}` : ""}`, t),
+  auditVerify: (t?: string) =>
+    get<{ events_checked: number; intact: boolean; broken_at: string | null }>("/audit/verify", t),
+  suppliers: (t?: string) =>
+    get<{ suppliers: { id: string; code: string; name: string; country: string; status: string; risk_composite: number | null; risk_band: string | null; last_rank: number | null }[] }>("/suppliers", t),
+  supplier: (id: string, t?: string) =>
+    get<{
+      id: string; code: string; name: string; country: string; status: string;
+      site: { locale: string | null; incoterm_default: string | null; lead_time_days: number | null };
+      kpis: { n: number; otd_pct: number; accept_pct: number; ppm: number; thin: boolean };
+      risk_history: { composite: number; band: string; weights_version: string; at: string }[];
+    }>(`/suppliers/${id}`, t),
+  aiJobs: (t?: string) =>
+    get<{ jobs: { id: string; mission_id: string; purpose: string; provider: string; model_version: string; status: string; error: string | null; result_label: string | null; at: string }[] }>("/ai-jobs", t),
+  notifications: (t?: string) =>
+    get<{ notifications: { kind: string; title: string; mission_id: string | null; at: string }[] }>("/notifications", t),
+  planDiff: (id: string, version: number, t?: string) =>
+    get<{ version: number; diff: Record<string, unknown> }>(`/missions/${id}/plans/${version}/diff`, t),
+  updateMission: (id: string, b: Record<string, unknown>, t?: string) =>
+    patch<Mission>(`/missions/${id}`, b, t),
   rules: (t?: string) =>
     get<{ rules: { version: string; effective_from: string; weights: Record<string, number>; tolerances: Record<string, number>; fx_policy: Record<string, unknown>; changelog: string }[] }>(
       `/rules`, t),

@@ -1,90 +1,384 @@
-/* ProcurementOS-Agent design tokens (prerequisite-docs/06 §2). Light + dark. */
-:root {
-  --bg: #f8fafc;
-  --surface: #ffffff;
-  --surface-2: #f1f5f9;
-  --border: #e2e8f0;
-  --text: #0f172a;
-  --text-2: #475569;
-  --accent: #4f46e5;
-  --accent-ink: #ffffff;
-  --ok: #15803d;
-  --warn: #b45309;
-  --danger: #b91c1c;
-  --agent: #6366f1;
-  --evidence: #0ea5e9;
-  --font-sans: Inter, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", monospace;
+/* ProcurementOS-Agent design system (prerequisite-docs/06 §2 + Slice 15).
+   Tailwind 4 utilities + component layer over the token contract. Light + dark. */
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-bg: #f6f8fb;
+  --color-surface: #ffffff;
+  --color-surface-2: #eef2f7;
+  --color-border: #e3e9f0;
+  --color-text: #0f172a;
+  --color-text-2: #52627a;
+  --color-accent: #4f46e5;
+  --color-accent-2: #7c3aed;
+  --color-accent-soft: #eef0fe;
+  --color-accent-ink: #ffffff;
+  --color-ok: #15803d;
+  --color-ok-soft: #e8f7ee;
+  --color-warn: #b45309;
+  --color-warn-soft: #fdf3e7;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fdecec;
+  --color-agent: #6366f1;
+  --color-evidence: #0ea5e9;
+
+  --font-sans: var(--font-inter), Inter, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, monospace;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 3px rgb(15 23 42 / 0.06);
+  --shadow-lift: 0 4px 12px rgb(15 23 42 / 0.08), 0 2px 4px rgb(15 23 42 / 0.05);
+  --shadow-gate: 0 8px 30px rgb(79 70 229 / 0.12);
 }
+
+/* Dark theme: tone tokens get lighter variants for contrast (F60). */
 .dark {
-  --bg: #0b1220;
-  --surface: #111a2e;
-  --surface-2: #182642;
-  --border: #243354;
-  --text: #e6edf7;
-  --text-2: #9aa9c4;
+  --color-bg: #0a1122;
+  --color-surface: #101a30;
+  --color-surface-2: #16233f;
+  --color-border: #22335a;
+  --color-text: #e8eef9;
+  --color-text-2: #9dabc9;
+  --color-accent-soft: #1b2547;
+  --color-ok: #4ade80;
+  --color-ok-soft: #12301f;
+  --color-warn: #fbbf24;
+  --color-warn-soft: #33240d;
+  --color-danger: #f87171;
+  --color-danger-soft: #3a1414;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 3px rgb(0 0 0 / 0.35);
+  --shadow-lift: 0 4px 14px rgb(0 0 0 / 0.45), 0 2px 4px rgb(0 0 0 / 0.3);
+  --shadow-gate: 0 8px 30px rgb(99 102 241 / 0.2);
 }
+
 body {
-  background: var(--bg);
-  color: var(--text);
+  background: var(--color-bg);
+  color: var(--color-text);
   font-family: var(--font-sans);
 }
-.density-comfortable table tr { height: 48px; }
-.density-compact table tr { height: 32px; }
+
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+  border-radius: 4px;
 }
+
 @media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
-/* Tables are the primary canvas; numbers render in mono, tabular. */
-table { border-collapse: collapse; width: 100%; background: var(--surface); }
-th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
-th { background: var(--surface-2); }
-td, .mono { font-variant-numeric: tabular-nums; }
-.mono { font-family: var(--font-mono); font-size: 0.85em; }
-pre.mono { background: var(--surface-2); padding: 12px; overflow: auto; }
+@layer components {
+  /* ---- Shell ---- */
+  .app-body {
+    @apply min-h-screen;
+  }
+  .main-content {
+    @apply mx-auto w-full max-w-[1240px] px-4 py-6 sm:px-6 lg:px-8;
+  }
 
-/* Evidence drawer (right side) + command palette. */
-.drawer {
-  position: fixed; right: 0; top: 0; bottom: 0; width: min(420px, 100vw);
-  background: var(--surface); border-left: 1px solid var(--border);
-  padding: 16px; overflow: auto; z-index: 40;
-}
-.palette {
-  position: fixed; top: 12vh; left: 50%; transform: translateX(-50%);
-  width: min(560px, 92vw); background: var(--surface);
-  border: 1px solid var(--border); border-radius: 10px; padding: 12px; z-index: 50;
-}
-.palette ul { list-style: none; padding: 0; }
-.palette button { width: 100%; text-align: left; padding: 8px; }
+  /* ---- Typography ---- */
+  .mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.85em;
+  }
+  td,
+  .mono {
+    font-variant-numeric: tabular-nums;
+  }
+  pre.mono {
+    @apply rounded-lg p-3 text-xs;
+    background: var(--color-surface-2);
+    overflow: auto;
+  }
 
-/* Approval gate: big touch targets, stacked on phones. */
-.approval-list { list-style: none; padding: 0; display: grid; gap: 12px; }
-.approval-card {
-  border: 1px solid var(--border); border-radius: 10px;
-  padding: 16px; background: var(--surface);
-}
-.gate-grid { display: grid; gap: 12px; max-width: 640px; }
-.row { display: flex; gap: 8px; flex-wrap: wrap; }
-button { padding: 10px 16px; }
-button.big { padding: 16px 24px; font-size: 1.1em; min-width: 44%; }
-button.danger { border-color: var(--danger); color: var(--danger); }
-.warn { border: 1px solid var(--warn); padding: 8px; border-radius: 6px; }
-[data-tone="ok"] { color: var(--ok); }
-[data-tone="warn"] { color: var(--warn); }
-[data-tone="bad"] { color: var(--danger); }
-label { display: grid; gap: 4px; margin: 8px 0; }
-input, select, textarea {
-  padding: 8px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--surface); color: var(--text); font: inherit;
+  /* ---- Cards ---- */
+  .card {
+    @apply rounded-xl p-4 sm:p-5;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-card);
+  }
+  .card-title {
+    @apply text-sm font-semibold tracking-tight;
+  }
+
+  /* ---- Buttons ---- */
+  button {
+    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-150;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+  }
+  button:hover:not([disabled]) {
+    background: var(--color-surface-2);
+  }
+  button:active:not([disabled]) {
+    transform: translateY(0.5px);
+  }
+  button[disabled] {
+    @apply cursor-not-allowed opacity-50; /* F59 */
+  }
+  button.primary {
+    @apply border-transparent text-white;
+    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+    box-shadow: 0 1px 2px rgb(79 70 229 / 0.35);
+  }
+  button.primary:hover:not([disabled]) {
+    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+    filter: brightness(1.08);
+  }
+  button.big {
+    @apply px-5 py-3 text-base; /* 44px+ touch targets */
+  }
+  button.danger {
+    border-color: var(--color-danger);
+    color: var(--color-danger);
+    background: var(--color-danger-soft);
+  }
+  button.danger:hover:not([disabled]) {
+    background: var(--color-danger);
+    color: #fff;
+  }
+  button.ghost {
+    @apply border-transparent;
+    background: transparent;
+  }
+  button.ghost:hover:not([disabled]) {
+    background: var(--color-surface-2);
+  }
+
+  /* ---- Forms ---- */
+  label {
+    @apply grid gap-1.5 text-xs font-medium;
+    color: var(--color-text-2);
+  }
+  input,
+  select,
+  textarea {
+    @apply rounded-lg px-3 py-2 text-sm transition-colors;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+    font: inherit;
+    font-size: 0.875rem;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-text-2);
+    opacity: 0.7;
+  }
+  input:hover:not([disabled]),
+  select:hover:not([disabled]),
+  textarea:hover:not([disabled]) {
+    border-color: var(--color-text-2);
+  }
+  input:focus,
+  select:focus,
+  textarea:focus {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -1px;
+    border-color: var(--color-accent);
+  }
+
+  /* ---- Tables (the primary canvas) ---- */
+  .table-card {
+    @apply overflow-hidden rounded-xl;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-card);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    background: transparent;
+    font-size: 0.875rem;
+  }
+  th {
+    @apply px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider;
+    background: var(--color-surface-2);
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-text-2);
+  }
+  td {
+    @apply px-3 py-2.5 text-left;
+    border-bottom: 1px solid var(--color-border);
+  }
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+  tbody tr {
+    transition: background-color 120ms ease;
+  }
+  tbody tr:hover {
+    background: var(--color-accent-soft);
+  }
+  .density-comfortable table tr {
+    height: 48px;
+  }
+  .density-compact table tr {
+    height: 32px;
+  }
+
+  /* ---- Badges ---- */
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold;
+  }
+  .badge-ok {
+    background: var(--color-ok-soft);
+    color: var(--color-ok);
+  }
+  .badge-warn {
+    background: var(--color-warn-soft);
+    color: var(--color-warn);
+  }
+  .badge-bad {
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+  }
+  .badge-info {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+  }
+  .badge-neutral {
+    background: var(--color-surface-2);
+    color: var(--color-text-2);
+  }
+  [data-tone="ok"] {
+    color: var(--color-ok);
+  }
+  [data-tone="warn"] {
+    color: var(--color-warn);
+  }
+  [data-tone="bad"] {
+    color: var(--color-danger);
+  }
+  .warn {
+    @apply rounded-lg p-3 text-sm;
+    border: 1px solid var(--color-warn);
+    background: var(--color-warn-soft);
+    color: var(--color-warn);
+  }
+
+  /* ---- Layout helpers (e2e hooks: .row, .gate-grid) ---- */
+  .row {
+    @apply flex flex-wrap items-center gap-2;
+  }
+  .gate-grid {
+    @apply grid max-w-[640px] gap-4;
+  }
+
+  /* ---- Task board ---- */
+  .board {
+    @apply grid gap-4 overflow-x-auto pb-2;
+    grid-template-columns: repeat(5, minmax(210px, 1fr));
+  }
+  .board .col {
+    @apply rounded-xl p-3;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+  }
+  .board .col > h2 {
+    @apply mb-3 text-[11px] font-semibold uppercase tracking-wider;
+    color: var(--color-text-2);
+  }
+  .board .card {
+    @apply mb-2 grid gap-2 p-3 shadow-none;
+  }
+
+  /* ---- Approval gate (360px path: cards stack, buttons full width) ---- */
+  .approval-list {
+    @apply grid list-none gap-3 p-0;
+  }
+  .approval-card {
+    @apply grid gap-3 rounded-xl p-4;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* ---- Advance panel ---- */
+  .advance {
+    @apply grid gap-3 rounded-xl p-4;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-card);
+    max-width: 640px;
+  }
+
+  /* ---- Evidence drawer (right side) ---- */
+  .drawer {
+    @apply fixed right-0 bottom-0 top-0 z-40 overflow-auto p-4;
+    width: min(440px, 100vw);
+    background: var(--color-surface);
+    border-left: 1px solid var(--color-border);
+    box-shadow: -8px 0 30px rgb(15 23 42 / 0.12);
+  }
+
+  /* ---- Command palette ---- */
+  .palette {
+    @apply fixed z-50 rounded-xl p-3;
+    top: 12vh;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(580px, 92vw);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-gate);
+  }
+  .palette ul {
+    @apply list-none p-0;
+  }
+  .palette button {
+    @apply w-full justify-start rounded-md px-3 py-2 text-left text-sm;
+  }
+  .palette button:hover:not([disabled]) {
+    background: var(--color-accent-soft);
+  }
+
+  /* ---- Skeletons ---- */
+  .skeleton {
+    @apply animate-pulse rounded-md;
+    background: var(--color-surface-2);
+  }
 }
 
-/* 360px approval path: cards stack, buttons go full width. */
+/* 360px approval path: cards stack, buttons go full width, tables keep
+   headers hidden but rows carry data-labels (F66). */
 @media (max-width: 720px) {
-  table, tbody, tr, td { display: block; width: 100%; }
-  thead { display: none; }
-  button.big { width: 100%; }
+  table tbody tr {
+    display: block;
+    width: 100%;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  table tbody td {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    border: none;
+    padding: 4px 8px;
+  }
+  table tbody td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-2);
+  }
+  thead {
+    display: none;
+  }
+  button.big {
+    width: 100%;
+  }
+  .board {
+    grid-template-columns: 1fr;
+  }
 }

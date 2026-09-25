@@ -20,6 +20,7 @@ Current ADRs:
 | 0002 | Next.js 14 → 16.3.6 security upgrade (React 19, codemod path) |
 | 0003 | OR-Tools dependency removed; greedy allocator is the certified optimizer |
 | 0004 | JWT validation moved from python-jose to PyJWT (unfixable ecdsa advisory) |
+| 0005 | Quote-line totals honor the price denomination (`price_uom`) — fixes a silent 24× inflation |
 
 Standing rules: deterministic calculations are the source of truth; AI output is
 untrusted; awards, money, contracts, and external messages require explicit human

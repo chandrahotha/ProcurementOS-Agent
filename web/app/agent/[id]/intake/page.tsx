@@ -7,6 +7,8 @@ import { Screen } from "@/components/Screen";
 import { AdvancePanel } from "@/components/AdvancePanel";
 import { api } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
+import { EmptyState, StateBadge } from "@/components/ui";
+import { Icon } from "@/components/icons";
 
 export default function IntakePage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
@@ -47,31 +49,50 @@ export default function IntakePage(props: { params: Promise<{ id: string }> }) {
   const clean = docs.some((d) => d.status === "clean");
 
   return (
-    <Screen code="P03" title="Intake" breadcrumb="Mission / Intake"
-      primary="Generate plan" state={docs.length ? "success" : "empty"}>
-      <label>
-        Upload quote / contract (PDF, XLSX, DOCX, CSV)
-        <input type="file"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void upload(f);
-          }} />
-      </label>
-      {verdict ? <p role="status">{verdict}</p> : null}
-      <table>
-        <thead><tr><th>File</th><th>Status</th></tr></thead>
-        <tbody>
-          {docs.map((d) => (
-            <tr key={d.id}><td>{d.filename}</td><td>{d.status}</td></tr>
-          ))}
-        </tbody>
-      </table>
+    <Screen code="P03" title="Intake" breadcrumb={[{ label: "Mission Control", href: "/agent" }, { label: "Intake" }]}
+      primary="Generate plan" onPrimary={() => void generatePlan()} state={docs.length ? "success" : "empty"}>
+      <div
+        className="card row justify-center gap-3 rounded-xl border-2 border-dashed p-6"
+        style={{ borderColor: "var(--color-border)" }}
+      >
+        <span style={{ color: "var(--color-accent)" }}>
+          <Icon name="upload" size={20} />
+        </span>
+        <label>
+          Upload quote / contract (PDF, XLSX, DOCX, CSV)
+          <input type="file"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void upload(f);
+            }} />
+        </label>
+      </div>
+      {verdict ? <p role="status"><StateBadge state="info" /> {verdict}</p> : null}
+      {docs.length === 0 ? (
+        <EmptyState icon="document" title="No documents yet"
+          body="Upload a quote or contract above — the quarantine pipeline scans it and a clean verdict unlocks planning." />
+      ) : (
+        <div className="table-card">
+          <table>
+            <caption className="sr-only">Document queue with quarantine verdicts</caption>
+            <thead><tr><th scope="col">File</th><th scope="col">Status</th></tr></thead>
+            <tbody>
+              {docs.map((d) => (
+                <tr key={d.id}>
+                  <td data-label="File">{d.filename}</td>
+                  <td data-label="Status"><StateBadge state={d.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <div className="row">
-        <button type="button" disabled={!clean} onClick={() => void generatePlan()}>
+        <button type="button" className="primary" disabled={!clean} onClick={() => void generatePlan()}>
           Generate plan
         </button>
       </div>
-      {note ? <p role="status">{note}</p> : null}
+      {note ? <p role="status"><StateBadge state="info" /> {note}</p> : null}
       <AdvancePanel missionId={id} toState="plan" label="Advance to plan"
         onAdvanced={() => setNote("State: plan.")} />
     </Screen>

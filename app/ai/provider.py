@@ -66,19 +66,44 @@ class CircuitBreaker:
 
 
 def run_with_fallback(
-    primary: MockProvider, fallback: MockProvider, prompt_version: str, inputs: dict[str, Any]
+    primary: MockProvider,
+    fallback: MockProvider,
+    prompt_version: str,
+    inputs: dict[str, Any],
+    breaker: CircuitBreaker | None = None,
 ) -> tuple[ProviderResult, str]:
-    """Try primary, retry-once with repair, then fallback; else degraded (no fabrication)."""
-    breaker = CircuitBreaker()
+    """Try primary, retry-once with repair, then fallback; else degraded (no fabrication).
+
+    The circuit breaker is persistent (per process, or passed in): once it
+    trips, calls skip straight to the fallback for the cooldown window
+    instead of pointlessly retrying a down provider (B6).
+    """
+    from app.core.config import settings
+
+    br = breaker or _BREAKER
+    if br.backoff_s != float(settings.ai_circuit_breaker_s) and breaker is not None:
+        br.backoff_s = float(settings.ai_circuit_breaker_s)
+    if br.tripped():
+        third = fallback.complete(prompt_version, inputs)
+        if third.ok:
+            br.record_success()
+            return third, "degraded-fallback"
+        return ProviderResult(ok=False, error=third.error, degraded=True), "degraded"
     first = primary.complete(prompt_version, inputs)
     if first.ok:
+        br.record_success()
         return first, "ok"
     # retry-once with repair prompt
     second = primary.complete(prompt_version + "+repair", inputs)
     if second.ok:
+        br.record_success()
         return second, "ok"
-    breaker.record_failure()
+    br.record_failure()
     third = fallback.complete(prompt_version, inputs)
     if third.ok:
+        br.record_success()
         return third, "degraded-fallback"
     return ProviderResult(ok=False, error=third.error or first.error, degraded=True), "degraded"
+
+
+_BREAKER = CircuitBreaker()

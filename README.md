@@ -6,9 +6,9 @@ Deterministic math is the source of truth; AI explains and drafts only. Awards, 
 
 ## Where this stands
 
-The backend is built and tested end to end over HTTP (full mission walk W1→W8, auth matrix, idempotency, deny cases). The deterministic engine carries golden vectors. All four binding golden tests (AGENT-001…004) are real and green. Every screen is wired to the API, and the full W1→W8 walk passes as a Playwright suite against the seeded synthetic stack.
+The backend is built and tested end to end over HTTP (full mission walk W1→W8, auth matrix, idempotency, deny cases). The deterministic engine carries golden vectors. All four binding golden tests (AGENT-001…004) are real and green. Every screen is wired to the API, and the full W1→W8 walk passes as a Playwright suite against the sqlite-backed seeded stack. The Slice 15 design system is in: Tailwind 4 over the token contract, Inter + IBM Plex Mono, a persistent app shell (sidebar, topbar, command palette, theme toggle), real KPI dashboards, and all 40+ screens designed — the full findings ledger from the 2026-09-25 repo audit lives in `bugs/`.
 
-Current check before every push: `ruff check` + `ruff format --check` clean, `mypy --strict` clean, `pytest` green (42, incl. AGENT-001…004), `tsc` + `next build` green, `vitest` green, Playwright green (smoke, 360px approval, full W1→W8). Dependency trees audit clean: `pip-audit` and `npm audit` (prod + dev) both report zero findings for project deps.
+Current check before every push: `ruff check` + `ruff format --check` clean, `mypy --strict` clean, `pytest` green (59, incl. AGENT-001…004), `tsc` + `next build` green, `vitest` green, Playwright green (smoke, 360px approval, full W1→W8). Dependency trees audit clean: `pip-audit` and `npm audit` (prod + dev) both report zero findings for project deps.
 
 ## Roadmap
 
@@ -29,7 +29,7 @@ Current check before every push: `ruff check` + `ruff format --check` clean, `my
 | 12 | Synthetic seed (7 users, 6 suppliers, 12 items, 24 txns) + fixtures | Done | `seed/seed_pos.py`, `seed/fixtures/` |
 | 13 | All screens wired to the API (P02–P16, G13, G16) | Done | `web/app/**`, `web/e2e/full-flow.spec.ts` |
 | 14 | Full W1–W8 Playwright walk on the seeded stack + CI e2e job | Done | `web/playwright.config.ts` (two-server boot) |
-| 15 | Styling pass (Tailwind/shadcn over the token CSS) | Next | hand-rolled tokens implement the 06 §2 contract for now |
+| 15 | Styling pass: Tailwind 4 design system, app shell, all screens | Done | `web/app/globals.css`, `web/components/`, `bugs/02-frontend.md` |
 | 16 | Staging deploy, real IdP, rollback rehearsal, release gate sign-off | Next | `docs/RELEASE_GATE.md`, issue #8 |
 
 Rule of thumb: the MVP build is done and verified — every screen is wired, the full mission walk passes end to end in CI, and the dependency tree audits clean. What remains is polish (Tailwind/shadcn styling pass) and operations (staging deploy with a real IdP + rehearsal). Open work is tracked as [GitHub issues](https://github.com/chandrahotha/ProcurementOS-Agent/issues).

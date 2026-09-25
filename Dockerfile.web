@@ -1,8 +1,23 @@
-FROM node:20-alpine
+FROM node:20-alpine AS deps
 WORKDIR /srv/web
 COPY web/package.json web/package-lock.json* ./
-RUN npm ci || npm install
+# Plain npm ci: the lockfile is committed and must never drift silently.
+RUN npm ci
+
+FROM node:20-alpine AS builder
+WORKDIR /srv/web
+COPY --from=deps /srv/web/node_modules ./node_modules
 COPY web/ ./
+ARG NEXT_PUBLIC_API_BASE=http://localhost:8000/api/v1
+ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
 RUN npm run build
+
+FROM node:20-alpine AS runtime
+WORKDIR /srv/web
+ENV NODE_ENV=production
+COPY --from=builder /srv/web/.next/standalone ./
+COPY --from=builder /srv/web/.next/static ./.next/static
+RUN addgroup --system --gid 10003 posweb && adduser --system --uid 10003 --ingroup posweb posweb
+USER posweb
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+CMD ["node", "server.js"]

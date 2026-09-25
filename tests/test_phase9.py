@@ -2,6 +2,7 @@
 POS-APPR-01, state-machine transitions, coverage gate, plan DAG validation.
 """
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -27,11 +28,18 @@ def test_pos_miss_01_advance_refused_without_coverage():
     ctx = GateContext(coverage_pct=40, blocking_conflicts=2, hostile_quarantined=True)
     ok, reason = check_transition("evidence", "analysis", ctx)
     assert ok is False and "coverage" in reason
+    # T20: coverage and conflicts are independent gates — a waiver admits
+    # low coverage but blocking conflicts still refuse the advance.
     waived = GateContext(
         coverage_pct=40, blocking_conflicts=2, hostile_quarantined=True, coverage_waived=True
     )
-    ok2, _ = check_transition("evidence", "analysis", waived)
-    assert ok2 is True
+    ok2, reason2 = check_transition("evidence", "analysis", waived)
+    assert ok2 is False and "conflicts" in reason2
+    waived_clean = GateContext(
+        coverage_pct=40, blocking_conflicts=0, hostile_quarantined=True, coverage_waived=True
+    )
+    ok3, _ = check_transition("evidence", "analysis", waived_clean)
+    assert ok3 is True
     cov = ev.coverage([{"field_name": "unit_price"}], ["unit_price", "currency", "uom"])
     assert cov["pct"] == 33 and cov["missing"] == ["currency", "uom"]
 
@@ -58,11 +66,18 @@ async def test_pos_sec_01_cross_tenant_denied() -> None:
         await s.commit()
         mine = (await s.execute(select(Mission).where(Mission.tenant_id == "t1"))).scalars().all()
         assert [m.id for m in mine] == ["m1"]
-        # Object-level check: t1 principal must not resolve t2's mission.
-        other = (
-            await s.execute(select(Mission).where(Mission.id == "m2", Mission.tenant_id == "t1"))
-        ).scalar_one_or_none()
-        assert other is None
+        # T7: the APP's authz layer is under test — must_mission with a t2
+        # principal must refuse t1's mission (404, no existence leak), not
+        # just verify a hand-written WHERE clause.
+        from fastapi import HTTPException
+
+        from app.api.common import must_mission
+        from app.auth.deps import Principal
+
+        t2_principal = Principal(user_id="u-t2", tenant_id="t2", email="o@x.io", roles=["Buyer"])
+        with pytest.raises(HTTPException) as ei:
+            await must_mission(s, t2_principal, "m1")
+        assert ei.value.status_code == 404
 
 
 async def test_pos_appr_01_single_lane_insufficient_over_threshold() -> None:
