@@ -28,13 +28,12 @@ export default function DecisionPage(props: { params: Promise<{ id: string }> })
 
   async function requestApprovals() {
     setNote("");
-    const payload = brief?.winner_supplier_id
-      ? { supplier_id: brief.winner_supplier_id, value_minor: 6000000,
-          threshold_minor: 5000000 }
-      : { supplier_id: "S-A", value_minor: 6000000, threshold_minor: 5000000 };
+    // Minimal hash-locked payload: the server computes the award value from
+    // certified results and picks the lanes (brain 04 §2).
+    const payload = { supplier_id: brief?.winner_supplier_id ?? "S-A" };
     try {
       const out = await api.requestApprovals(id, {
-        action_class: "AWARD", payload, value_minor: 6000000,
+        action_class: "AWARD", payload,
       }, readToken());
       setNote(`Requested: ${out.approvals.map((a) => a.lane).join(" + ")} lanes. ` +
         "Decide on the Approval screen.");

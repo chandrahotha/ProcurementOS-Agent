@@ -4,6 +4,41 @@
 > how it was checked, and what is still open. Anything that bends the brain
 > gets an ADR link, not a quiet edit.
 
+## 2026-09-24 — Brutal-audit fix 1 of N: server-computed award value
+
+The self-audit's finding #1 was real: the approval lanes for an AWARD
+trusted the caller's `value_minor` (brain 04 §2 says value is the
+deterministic TCO at the current rule version, never client-declared).
+A buyer could have declared `value_minor: 1` to dodge the Finance lane.
+
+- `app/approvals/service.py` now computes AWARD value from the awarded
+  supplier's latest certified `CostResult` and the dual-control threshold
+  from the tenant's newest `RuleVersion` (seeded: EUR 50k). Both
+  `request_approval` and `quorum_met` recompute lanes server-side, and a
+  forged low value in the payload cannot downgrade anything — proven in
+  AGENT-002 with `value_minor: 1` in the payload while the certified TCO
+  (EUR 60k) still forces Manager + Finance.
+- An AWARD naming a supplier with no certified TCO is refused outright
+  (422 at request; blocked with an audit reason at execute) — no guessing.
+- API body no longer carries value/threshold fields for approvals; the
+  web client and P12 send a minimal hash-locked `{supplier_id}` payload.
+- E2E follows the honest math: the demo mission's certified TCO (EUR 47.20)
+  is under the threshold, so the walk now exercises a single managerial
+  lane; the dual-lane path stays covered by AGENT-002 and POS-APPR-01
+  with certified values above the threshold.
+- Dependabot: pulled all 34 open alerts via the API and verified every one
+  is stale — installed next 16.3.6 / postcss 8.5.23+ / vite 8.3.1 /
+  vitest 5.0.1 all sit above their fix versions. They should auto-close
+  when dependabot rescans after this push; stragglers get dismissed with
+  evidence.
+
+Checks: ruff + format clean, `mypy --strict` clean, `pytest` 42 green
+(AGENT-002 strengthened), `tsc` + `next build` + `vitest` + Playwright 3/3
+with the updated full-flow. Remaining audit findings (evidence links,
+document bytes, real extractor, KPIs from ledger, chain verify, CONC-01,
+GUARDED caps, rate limits, egress test, UX suite) are queued in the todo
+list and land next.
+
 ## 2026-09-24 — Issues 6+7 closed: security deps, all screens wired, full-flow E2E
 
 - Deps (issue 7): the audit findings are gone. npm side: `next` 14→16.3.6

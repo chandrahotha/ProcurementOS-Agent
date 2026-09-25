@@ -11,7 +11,7 @@ from app.actions import service as actions
 from app.approvals import service as approvals
 from app.models.base import Base
 from app.models.foundation import AuditEvent
-from app.models.mission import Mission, TimelineEvent
+from app.models.mission import CostResult, Mission, TimelineEvent
 from app.tools import registry
 
 
@@ -71,16 +71,29 @@ async def test_agent_002_award_blocked_then_once_idempotent() -> None:
         m = (await s.execute(select(Mission).where(Mission.id == "m1"))).scalar_one()
         assert m.state == "approval"
 
-        # 2) Quorum: AWARD 60k EUR (> 50k) needs managerial + finance.
+        # 2) Server-computed value (04 s2): certify TCO of EUR 60k for S1,
+        # then request AWARD -> lanes managerial + finance. The client's
+        # forged value_minor=1 in the payload cannot downgrade lanes.
+        s.add(
+            CostResult(
+                tenant_id="t1",
+                mission_id="m1",
+                run_id="",
+                supplier_id="S1",
+                scenario_id="",
+                tco_minor=6_000_000,
+                build_up={"price": 6_000_000},
+            )
+        )
+        await s.flush()
+        forged = {**payload, "value_minor": 1, "threshold_minor": 1}
         rows = await approvals.request_approval(
             s,
             tenant_id="t1",
             mission_id="m1",
             action_class="AWARD",
-            payload=payload,
+            payload=forged,
             requested_by="u-buyer",
-            value_minor=6_000_000,
-            threshold_minor=5_000_000,
         )
         assert {r.lane for r in rows} == {"managerial", "finance"}
         for r in rows:
@@ -99,25 +112,38 @@ async def test_agent_002_award_blocked_then_once_idempotent() -> None:
         # Expired/mismatched payload must NOT pass: tampered value changes hash.
         assert (
             await approvals.quorum_met(
-                s, tenant_id="t1", mission_id="m1", action_class="AWARD", payload=payload
+                s, tenant_id="t1", mission_id="m1", action_class="AWARD", payload=forged
             )
             is True
         )
-        tampered = dict(payload, value_minor=1)
+        tampered = dict(forged, supplier_id="S-other")
         assert (
             await approvals.quorum_met(
                 s, tenant_id="t1", mission_id="m1", action_class="AWARD", payload=tampered
             )
             is False
         )
+        # Unknown supplier -> no certified TCO -> the request itself refuses.
+        import pytest as _pytest
+
+        with _pytest.raises(approvals.ApprovalError):
+            await approvals.request_approval(
+                s,
+                tenant_id="t1",
+                mission_id="m1",
+                action_class="AWARD",
+                payload={"supplier_id": "S-ghost"},
+                requested_by="u-buyer",
+            )
 
         # 3) Execute once -> receipt; replay same key -> same single receipt.
+        # The execute payload must hash-match the approved payload (forged).
         first = await actions.execute(
             s,
             tenant_id="t1",
             mission_id="m1",
             action_class="AWARD",
-            payload=payload,
+            payload=forged,
             tool_name="issue_po_intent",
             actor_id="u-buyer",
             request_id="r2",
@@ -129,7 +155,7 @@ async def test_agent_002_award_blocked_then_once_idempotent() -> None:
             tenant_id="t1",
             mission_id="m1",
             action_class="AWARD",
-            payload=payload,
+            payload=forged,
             tool_name="issue_po_intent",
             actor_id="u-buyer",
             request_id="r3",

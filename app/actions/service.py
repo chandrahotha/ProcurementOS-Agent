@@ -73,13 +73,27 @@ async def execute(
     existing = await _receipt(session, tenant_id, idempotency_key)
     if existing is not None:
         return {"receipt": existing.payload, "replayed": True}
-    ok = await approvals.quorum_met(
-        session,
-        tenant_id=tenant_id,
-        mission_id=mission_id,
-        action_class=action_class,
-        payload=payload,
-    )
+    try:
+        ok = await approvals.quorum_met(
+            session,
+            tenant_id=tenant_id,
+            mission_id=mission_id,
+            action_class=action_class,
+            payload=payload,
+        )
+    except approvals.ApprovalError as e:
+        # Server-side value check refused (e.g. AWARD without certified TCO).
+        await append_event(
+            session,
+            tenant_id=tenant_id,
+            action="award_blocked_no_approval",
+            actor_id=actor_id,
+            mission_id=mission_id,
+            request_id=request_id,
+            object_type="action",
+            reason=f"{action_class} execute denied: {e}",
+        )
+        raise ActionBlockedError(f"{action_class} blocked: {e}") from e
     if not ok:
         await append_event(
             session,

@@ -27,8 +27,10 @@ WRITE_ROLES = {BUYER, MANAGER, ADMIN}
 class ApprovalRequestBody(BaseModel):
     action_class: str
     payload: dict[str, Any]
-    value_minor: int = 0
-    threshold_minor: int = 5_000_000
+    # value_minor/threshold deliberately absent: the server computes AWARD
+    # value from certified CostResult rows and the threshold from the
+    # tenant's rule version (brain 04 section 2). Client-declared value
+    # cannot downgrade lanes.
 
 
 class DecideBody(BaseModel):
@@ -59,8 +61,6 @@ async def request_approvals(
             action_class=body.action_class,
             payload=body.payload,
             requested_by=principal.user_id,
-            value_minor=body.value_minor,
-            threshold_minor=body.threshold_minor,
         )
     except ApprovalError as e:
         await session.rollback()
@@ -120,13 +120,17 @@ async def decide_approval(
         if "expired" in msg:
             code = 410
         return err(code, "approval_decide_failed", msg, rid)
-    quorum = await quorum_met(
-        session,
-        tenant_id=m.tenant_id,
-        mission_id=m.id,
-        action_class=row.action_class,
-        payload=row.payload_json,
-    )
+    quorum = False
+    try:
+        quorum = await quorum_met(
+            session,
+            tenant_id=m.tenant_id,
+            mission_id=m.id,
+            action_class=row.action_class,
+            payload=row.payload_json,
+        )
+    except ApprovalError:
+        quorum = False
     await aud(
         session,
         request,
@@ -161,13 +165,18 @@ async def action_dry_run(
     except Exception as e:
         return not_found(request, e)
     rid = get_request_id(request)
-    quorum = await quorum_met(
-        session,
-        tenant_id=m.tenant_id,
-        mission_id=m.id,
-        action_class=body.action_class,
-        payload=body.payload,
-    )
+    try:
+        quorum = await quorum_met(
+            session,
+            tenant_id=m.tenant_id,
+            mission_id=m.id,
+            action_class=body.action_class,
+            payload=body.payload,
+        )
+    except ApprovalError as e:
+        # Server-side value check refused (e.g. AWARD without certified TCO):
+        # the dry-run must say NEEDS-APPROVAL with the reason, not 500.
+        return err(422, "dryrun_refused", str(e), rid)
     verdict = dry_run_eval(body.action_class, {**body.payload, "payload_hash_match": True}, quorum)
     await aud(
         session,

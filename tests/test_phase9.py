@@ -12,7 +12,7 @@ from app.evidence import service as ev
 from app.evidence.conflicts import three_way_diff
 from app.missions.machine import GateContext, check_transition
 from app.models.base import Base
-from app.models.mission import Mission
+from app.models.mission import CostResult, Mission
 from app.plans.service import diff_plans, validate_dag
 
 
@@ -79,7 +79,21 @@ async def test_pos_appr_01_single_lane_insufficient_over_threshold() -> None:
             )
         )
         await s.commit()
-        payload = {"supplier_id": "S1", "value_minor": 6_000_000, "threshold_minor": 5_000_000}
+        # Server-computed value (04 s2): certify S1's TCO at EUR 60k so the
+        # AWARD escalates to dual lanes even though the payload declares 1.
+        s.add(
+            CostResult(
+                tenant_id="t1",
+                mission_id="m9",
+                run_id="",
+                supplier_id="S1",
+                scenario_id="",
+                tco_minor=6_000_000,
+                build_up={"price": 6_000_000},
+            )
+        )
+        await s.commit()
+        payload = {"supplier_id": "S1", "value_minor": 1, "threshold_minor": 1}
         rows = await approvals.request_approval(
             s,
             tenant_id="t1",
@@ -87,9 +101,9 @@ async def test_pos_appr_01_single_lane_insufficient_over_threshold() -> None:
             action_class="AWARD",
             payload=payload,
             requested_by="u-b",
-            value_minor=6_000_000,
-            threshold_minor=5_000_000,
         )
+        # Forged low value cannot downgrade: certified 60k > 50k threshold.
+        assert {r.lane for r in rows} == {"managerial", "finance"}
         # Approve ONLY the managerial lane -> quorum still false -> execute DENY.
         mgr = next(r for r in rows if r.lane == "managerial")
         await approvals.decide(

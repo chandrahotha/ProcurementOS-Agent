@@ -17,8 +17,7 @@ export function AdvancePanel({
   onAdvanced?: (m: Mission) => void;
 }) {
   const [cls, setCls] = useState("AWARD");
-  const [payload, setPayload] = useState(
-    '{"supplier_id": "S-A", "value_minor": 6000000, "threshold_minor": 5000000}');
+  const [payload, setPayload] = useState('{"supplier_id": "S-A"}');
   const [note, setNote] = useState("");
   const [missing, setMissing] = useState<string[]>([]);
 

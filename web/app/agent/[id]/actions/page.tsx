@@ -12,8 +12,7 @@ export default function ActionsPage(props: { params: Promise<{ id: string }> }) 
   const params = use(props.params);
   const mid = params.id;
   const [actionClass, setActionClass] = useState("AWARD");
-  const [payload, setPayload] = useState(
-    '{"supplier_id": "S-A", "value_minor": 6000000, "threshold_minor": 5000000}');
+  const [payload, setPayload] = useState('{"supplier_id": "S-A"}');
   const [tool, setTool] = useState("issue_po_intent");
   const [verdict, setVerdict] = useState("");
   const [policy, setPolicy] = useState("");

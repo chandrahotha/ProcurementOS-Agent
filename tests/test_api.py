@@ -283,31 +283,43 @@ def test_full_lifecycle_and_matrix():
     # --- W6 brief + approvals ---
     r = c.get(f"{base}/brief", headers=H(B))
     assert r.json()["data"]["winner_supplier_id"] == "S-A"
-    award = {"supplier_id": "S-A", "value_minor": 6000000, "threshold_minor": 5000000}
+    # Server-computed value (04 s2): S-A's certified TCO is 4,720 minor
+    # (EUR 47.20) < the 50k threshold, so AWARD needs the managerial lane
+    # only. The forged low/high values in the payload cannot change lanes.
+    award = {"supplier_id": "S-A", "value_minor": 1, "threshold_minor": 1}
     r = c.post(
         f"{base}/approvals",
         headers=H(B),
-        json={"action_class": "AWARD", "payload": award, "value_minor": 6000000},
+        json={"action_class": "AWARD", "payload": award},
     )
     aids = {a["lane"]: a["id"] for a in r.json()["data"]["approvals"]}
-    assert set(aids) == {"managerial", "finance"}
-    mgr_decide = f"{base}/approvals/{aids['managerial']}/decide"
-    r = c.post(mgr_decide, headers=H(MGR), json={"decision": "approved", "reason": "ok"})
-    assert r.json()["data"]["quorum_met"] is False
-    # execute before quorum -> 403 with audit
+    assert set(aids) == {"managerial"}
+    # AWARD for a supplier with no certified TCO is refused outright.
+    r = c.post(
+        f"{base}/approvals",
+        headers=H(B),
+        json={"action_class": "AWARD", "payload": {"supplier_id": "S-Z"}},
+    )
+    assert r.status_code == 422
+    # Execute before any decision -> blocked (AGENT-002 at HTTP level).
     ex_body = {"action_class": "AWARD", "payload": award, "tool_name": "issue_po_intent"}
     r = c.post(f"{base}/actions/execute", headers=H(B, "k-ex"), json=ex_body)
     assert r.status_code == 403
-    fin_decide = f"{base}/approvals/{aids['finance']}/decide"
-    r = c.post(fin_decide, headers=H(FIN), json={"decision": "approved", "reason": "budget ok"})
-    assert r.json()["data"]["quorum_met"] is True
+    # Dry-run before approval says NEEDS-APPROVAL, not ALLOW.
     r = c.post(
         f"{base}/actions/dry-run", headers=H(B), json={"action_class": "AWARD", "payload": award}
     )
-    assert r.json()["data"]["verdict"] == "ALLOW"
+    assert r.json()["data"]["verdict"] == "NEEDS-APPROVAL"
+    # Finance cannot decide a managerial-lane row (lane roles enforced).
+    mgr_decide = f"{base}/approvals/{aids['managerial']}/decide"
+    r = c.post(mgr_decide, headers=H(FIN), json={"decision": "approved", "reason": "x"})
+    assert r.status_code == 403
+    r = c.post(mgr_decide, headers=H(MGR), json={"decision": "approved", "reason": "ok"})
+    assert r.json()["data"]["quorum_met"] is True
     r = c.post(f"{base}/actions/execute", headers=H(B, "k-ex"), json=ex_body)
     assert r.status_code == 200
     assert r.json()["data"]["replayed"] is False
+    # Execute is idempotent: replay returns the original receipt.
     r = c.post(f"{base}/actions/execute", headers=H(B, "k-ex"), json=ex_body)
     assert r.json()["data"]["replayed"] is True
 

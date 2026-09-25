@@ -8,7 +8,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 const BUYER = "amara.buyer1@syn.example";
 const MANAGER = "daniel.manager@syn.example";
-const FINANCE = "fatima.finance@syn.example";
 
 async function connect(page: Page, email: string) {
   await page.goto("/agent");
@@ -84,30 +83,23 @@ test("W1-W8: intake through report", async ({ page }) => {
   await see(page, "Draft stored");
   await expect(page.locator("table tbody tr td").first()).toBeVisible();
 
-  // W6: brief + approval request (P12), then the two-lane gate (P13).
+  // W6: brief + approval request (P12), then the lane gate (P13). The
+  // server computes the award value from certified results (04 §2): S-A's
+  // TCO is below the dual-control threshold, so the managerial lane alone
+  // decides — a small award, exactly as the math says.
   await page.goto(`/agent/${missionId}/decision`);
   await see(page, "Winner");
   await page.locator(".row").getByRole("button", { name: "Request approvals" }).click();
-  await see(page, "managerial + finance");
+  await see(page, "managerial");
   await page.goto(`/agent/${missionId}/negotiation`);
   await page.getByRole("button", { name: "Advance to approval (Manager)" }).click();
   await see(page, "Advanced to approval.");
 
   await page.goto(`/agent/${missionId}/approval`);
-  await expect(page.locator(".approval-card")).toHaveCount(2);
+  await expect(page.locator(".approval-card")).toHaveCount(1);
   await page.locator(".approval-card").first()
     .getByRole("button", { name: "Approve" }).click();
-  await see(page, "Recorded");
-
-  await connect(page, FINANCE);
-  await page.goto(`/agent/${missionId}/approval`);
-  await page.locator(".approval-card").last()
-    .getByRole("button", { name: "Approve" }).click();
   await see(page, "Quorum met");
-
-  // Lanes decided; a Writer (Manager) carries the quorum forward.
-  await connect(page, MANAGER);
-  await page.goto(`/agent/${missionId}/approval`);
   await page.getByRole("button", { name: "Advance to action (quorum verified)" }).click();
   await see(page, "Advanced to action.");
 

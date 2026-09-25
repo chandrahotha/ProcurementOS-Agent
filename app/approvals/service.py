@@ -3,6 +3,13 @@
 Quorum model: a request creates one Approval row per required lane (same
 payload_hash). Quorum met when every lane row is approved, unexpired, with
 matching payload hash. Admin cannot approve (config-only).
+
+Value is NEVER client-declared for AWARD (brain 04 section 2: "Value =
+deterministic TCO of the action payload at current rule_version"). The
+server reads the awarded supplier's latest certified CostResult and the
+threshold from the tenant's active rule version. A forged low
+value_minor in the payload cannot downgrade the lanes because both
+request and quorum recompute them from certified rows.
 """
 
 from __future__ import annotations
@@ -17,8 +24,10 @@ from app.approvals.policy import required_lanes
 from app.audit.writer import payload_hash
 from app.auth import roles as R
 from app.models.foundation import Approval
+from app.models.mission import CostResult, RuleVersion
 
 EXPIRY_DAYS = 7
+DEFAULT_THRESHOLD_MINOR = 5_000_000  # EUR 50k fallback when no rule row
 
 
 class ApprovalError(Exception):
@@ -39,6 +48,81 @@ def _expired(expires_at: str | None) -> bool:
         return True
 
 
+async def certified_award_value(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    mission_id: str,
+    supplier_id: str,
+) -> int:
+    """Latest certified TCO for the supplier in this mission (minor units).
+
+    Raises ApprovalError when no certified cost exists: an AWARD without
+    analysis is refused rather than guessed.
+    """
+    q = (
+        select(CostResult)
+        .where(
+            CostResult.tenant_id == tenant_id,
+            CostResult.mission_id == mission_id,
+            CostResult.supplier_id == supplier_id,
+        )
+        .order_by(CostResult.created_at.desc())
+        .limit(1)
+    )
+    row = (await session.execute(q)).scalar_one_or_none()
+    if row is None:
+        raise ApprovalError(
+            f"no certified TCO for supplier {supplier_id!r}; "
+            "run the analysis suite before requesting an AWARD"
+        )
+    return int(row.tco_minor)
+
+
+async def rule_threshold(session: AsyncSession, tenant_id: str) -> int:
+    """Dual-control threshold from the newest rule version (fallback 50k)."""
+    q = (
+        select(RuleVersion)
+        .where(RuleVersion.tenant_id == tenant_id)
+        .order_by(RuleVersion.created_at.desc())
+        .limit(1)
+    )
+    rv = (await session.execute(q)).scalar_one_or_none()
+    if rv is None:
+        return DEFAULT_THRESHOLD_MINOR
+    try:
+        return int((rv.tolerances or {}).get("award_dual_control_minor", DEFAULT_THRESHOLD_MINOR))
+    except (TypeError, ValueError):
+        return DEFAULT_THRESHOLD_MINOR
+
+
+async def lanes_for(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    mission_id: str,
+    action_class: str,
+    payload: dict[str, Any],
+) -> list[str]:
+    """Required lanes with server-side value for AWARD (brain 04 section 2).
+
+    Non-AWARD classes have fixed lanes regardless of value, so their
+    payload-declared value (if any) is irrelevant to lane selection.
+    """
+    if action_class == "AWARD":
+        supplier_id = str(payload.get("supplier_id", ""))
+        if not supplier_id:
+            raise ApprovalError("AWARD payload must name a supplier_id")
+        value = await certified_award_value(
+            session, tenant_id=tenant_id, mission_id=mission_id, supplier_id=supplier_id
+        )
+        threshold = await rule_threshold(session, tenant_id)
+    else:
+        value = int(payload.get("value_minor", 0) or 0)
+        threshold = DEFAULT_THRESHOLD_MINOR
+    return required_lanes(action_class, value, threshold)
+
+
 async def request_approval(
     session: AsyncSession,
     *,
@@ -47,10 +131,16 @@ async def request_approval(
     action_class: str,
     payload: dict[str, Any],
     requested_by: str,
-    value_minor: int = 0,
-    threshold_minor: int = 5_000_000,  # €50k default
 ) -> list[Approval]:
-    lanes = required_lanes(action_class, value_minor, threshold_minor)
+    # value_minor/threshold args intentionally removed from the signature:
+    # the server computes them (see module docstring).
+    lanes = await lanes_for(
+        session,
+        tenant_id=tenant_id,
+        mission_id=mission_id,
+        action_class=action_class,
+        payload=payload,
+    )
     if not lanes:
         raise ApprovalError(f"unknown action class {action_class}")
     ph = payload_hash(payload)
@@ -125,11 +215,20 @@ async def quorum_met(
     action_class: str,
     payload: dict[str, Any],
 ) -> bool:
-    lanes = required_lanes(
-        action_class,
-        int(payload.get("value_minor", 0)),
-        int(payload.get("threshold_minor", 5_000_000)),
-    )
+    # Lanes recomputed from certified rows: the payload hash locks WHAT was
+    # approved; the server decides WHICH lanes that payload requires. A
+    # payload the server cannot value (e.g. AWARD naming a supplier with no
+    # certified TCO) can never satisfy quorum -> False, not an error.
+    try:
+        lanes = await lanes_for(
+            session,
+            tenant_id=tenant_id,
+            mission_id=mission_id,
+            action_class=action_class,
+            payload=payload,
+        )
+    except ApprovalError:
+        return False
     ph = payload_hash(payload)
     q = await session.execute(
         select(Approval).where(

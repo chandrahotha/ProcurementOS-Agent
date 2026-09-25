@@ -253,13 +253,18 @@ async def _gate_context(
     kinds = {e.kind for e in await rows_for(session, TimelineEvent, m.id)}
     quorum = False
     if body.action_class and body.payload is not None:
-        quorum = await quorum_met(
-            session,
-            tenant_id=m.tenant_id,
-            mission_id=m.id,
-            action_class=body.action_class,
-            payload=body.payload,
-        )
+        from app.approvals.service import ApprovalError
+
+        try:
+            quorum = await quorum_met(
+                session,
+                tenant_id=m.tenant_id,
+                mission_id=m.id,
+                action_class=body.action_class,
+                payload=body.payload,
+            )
+        except ApprovalError:
+            quorum = False  # e.g. AWARD without certified TCO: gate stays shut
     quarantine_ok = True
     flagged = [s for s in spans if s.instruction_flag]
     if flagged:
