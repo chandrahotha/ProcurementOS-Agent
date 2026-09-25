@@ -3,16 +3,20 @@
 Fails closed: unknown issuer config, bad signature, wrong audience,
 or expired token all raise AuthError (mapped to 401 upstream).
 JWKS responses are cached briefly; key rollover is picked up on TTL expiry.
+
+Uses PyJWT (RS256). python-jose was dropped because it pins `ecdsa`,
+which carries an unfixable advisory (see docs/adr/0002-pyjwt.md).
 """
 
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 import httpx
-from jose import jwt
-from jose.exceptions import ExpiredSignatureError, JWTClaimsError, JWTError
+import jwt
+from jwt.algorithms import RSAAlgorithm
+from jwt.exceptions import DecodeError, ExpiredSignatureError, InvalidTokenError
 
 JWKS_TTL_S = 600
 
@@ -49,21 +53,33 @@ def jwks_for(issuer: str) -> dict[str, Any]:
 def verify_bearer(token: str, issuer: str, audience: str) -> dict[str, Any]:
     try:
         header = jwt.get_unverified_header(token)
-    except JWTError as e:
+    except DecodeError as e:
         raise AuthError(f"malformed token: {e}") from e
     keys = jwks_for(issuer)
     kid = header.get("kid")
-    key = next((k for k in keys.get("keys", []) if k.get("kid") == kid), None)
-    if key is None:
+    entry = next((k for k in keys.get("keys", []) if k.get("kid") == kid), None)
+    if entry is None:
         raise AuthError("signing key not in JWKS (unknown kid)")
     try:
-        return dict(jwt.decode(token, key, algorithms=["RS256"], audience=audience, issuer=issuer))
+        # from_jwk's stub includes private-key types, but a JWKS only
+        # carries public material; cast is honest and runtime-checked below.
+        key = cast("Any", RSAAlgorithm.from_jwk(entry))
+    except Exception as e:
+        raise AuthError(f"unsupported signing key: {e}") from e
+    try:
+        claims = jwt.decode(
+            key=key,
+            jwt=token,
+            algorithms=["RS256"],
+            audience=audience,
+            issuer=issuer,
+        )
+        return dict(claims)
     except ExpiredSignatureError as e:
         raise AuthError("token expired") from e
-    except JWTClaimsError as e:
+    except InvalidTokenError as e:
+        # Covers wrong audience/issuer, bad signature, bad claims shape.
         raise AuthError(f"claim mismatch: {e}") from e
-    except JWTError as e:
-        raise AuthError(f"signature invalid: {e}") from e
 
 
 def clear_cache() -> None:

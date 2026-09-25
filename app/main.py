@@ -7,6 +7,7 @@ Isolation: own schema pos_*, own buckets/queues; no sibling calls.
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -14,6 +15,7 @@ from app.api import (
     analysis,
     approvals_actions,
     evidence,
+    misc,
     missions,
     plans_tasks,
     runs_export,
@@ -26,6 +28,14 @@ from app.core.request_id import RequestIDMiddleware, get_request_id
 API_PREFIX = "/api/v1"
 
 app = FastAPI(title="ProcurementOS-Agent", version="0.1.0")
+# Browser origin only; the web app never talks to a third-party host.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.web_origin],
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID"],
+    expose_headers=["X-Request-ID", "X-Manifest-Missions", "Content-Disposition"],
+)
 app.add_middleware(RequestIDMiddleware)
 
 for router in (
@@ -36,6 +46,7 @@ for router in (
     scenarios.router,
     approvals_actions.router,
     runs_export.router,
+    misc.router,
 ):
     app.include_router(router, prefix=API_PREFIX)
     # /cases/* mirrors /missions/* for template compatibility (same handlers).

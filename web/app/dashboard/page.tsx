@@ -4,3 +4,4 @@ export default function Page() {
   return <Screen code="G04" title="Dashboard" breadcrumb="Dashboard" />;
 }
 
+

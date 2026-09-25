@@ -36,3 +36,6 @@ dist/
 build/
 coverage/
 htmlcov/
+# Scratch DBs from local seed/E2E runs
+*.db
+*.sqlite3

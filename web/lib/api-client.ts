@@ -71,6 +71,11 @@ export type Mission = {
   coverage_pct: number; autonomy_level: string; currency: string;
 };
 
+type ScenarioOut = {
+  scenario_id: string; allocations: unknown[];
+  objective_value: number; savings_vs_baseline: number; candidate: boolean;
+};
+
 export const api = {
   missions: (t?: string) => get<{ missions: Mission[] }>(`/missions`, t),
   mission: (id: string, t?: string) => get<Mission>(`/missions/${id}`, t),
@@ -95,33 +100,45 @@ export const api = {
     get<{ documents: { id: string; filename: string; status: string }[] }>(
       `/missions/${id}/documents`, t),
   plan: (id: string, t?: string) =>
-    get<{ version: number; status: string; taskspecs: unknown[] }>(
+    get<{ version: number; status: string; dag_hash: string; taskspecs: unknown[]; acknowledged_by: string | null }>(
       `/missions/${id}/plans/current`, t),
   generatePlan: (id: string, t?: string) =>
     post<{ version: number; tasks: number }>(`/missions/${id}/plans`, {}, t),
   acknowledge: (id: string, v: number, t?: string) =>
     post(`/missions/${id}/plans/${v}/acknowledge`, {}, t),
   tasks: (id: string, t?: string) =>
-    get<{ tasks: { key: string; title: string; tool: string; status: string }[] }>(
+    get<{ tasks: { key: string; title: string; tool: string; status: string; attempts: number; plan_version: number; evidence_refs: string[] }[] }>(
       `/missions/${id}/tasks`, t),
   evidence: (id: string, t?: string) =>
     get<{ spans: Span[] }>(`/missions/${id}/evidence`, t),
+  recordSpans: (id: string, spans: Record<string, unknown>[], t?: string) =>
+    post<{ spans: Span[] }>(`/missions/${id}/evidence/spans`, spans, t),
   correctSpan: (id: string, span: string, b: Record<string, unknown>, t?: string) =>
     patch(`/missions/${id}/evidence/${span}`, b, t),
   analyze: (id: string, b: Record<string, unknown>, t?: string, key?: string) =>
     post<{ run_id: string; replayed: boolean }>(`/missions/${id}/analyze`, b, t, key),
-  sourcing: (id: string, t?: string) => get(`/missions/${id}/results/sourcing`, t),
-  cost: (id: string, t?: string) => get(`/missions/${id}/results/cost`, t),
-  risk: (id: string, t?: string) => get(`/missions/${id}/results/risk`, t),
+  sourcing: (id: string, t?: string) =>
+    get<{ lines: { line_id: string; supplier_id: string; normalized_total_minor: number; rank: number; compliant: boolean; evidence_refs: string[] }[] }>(
+      `/missions/${id}/results/sourcing`, t),
+  cost: (id: string, t?: string) =>
+    get<{ costs: { supplier_id: string; tco_minor: number; build_up: Record<string, number>; fx: unknown[]; stale: boolean }[] }>(
+      `/missions/${id}/results/cost`, t),
+  risk: (id: string, t?: string) =>
+    get<{ risks: { supplier_id: string; dimensions: Record<string, number>; composite: number; band: string; weights_version: string }[] }>(
+      `/missions/${id}/results/risk`, t),
   scenario: (id: string, b: Record<string, unknown>, t?: string) =>
-    post(`/missions/${id}/scenarios`, b, t),
+    post<ScenarioOut>(`/missions/${id}/scenarios`, b, t),
   optimize: (id: string, b: Record<string, unknown>, t?: string) =>
-    post(`/missions/${id}/scenarios/optimize`, b, t),
+    post<ScenarioOut>(`/missions/${id}/scenarios/optimize`, b, t),
   draft: (id: string, b: Record<string, unknown>, t?: string) =>
-    post(`/missions/${id}/negotiation/drafts`, b, t),
+    post<{ supplier_id: string; sent: boolean; ladder: { opening: number; target: number; walk_away: number; concessions: number[] } }>(
+      `/missions/${id}/negotiation/drafts`, b, t),
   brief: (id: string, t?: string) => get<{
     winner_supplier_id: string | null; winner_tco_minor: number | null;
-    cited_lines: string[]; candidate_scenarios: string[];
+    ranking: { supplier_id: string; tco_minor: number }[];
+    candidate_scenarios: string[];
+    exceptions: { stale_fx_suppliers: string[]; lines_ranked: number };
+    evidence_note: string; cited_lines: string[];
   }>(`/missions/${id}/brief`, t),
   requestApprovals: (id: string, b: Record<string, unknown>, t?: string) =>
     post<{ approvals: { id: string; lane: string; status: string }[] }>(
@@ -139,6 +156,45 @@ export const api = {
   timeline: (id: string, t?: string) =>
     get<{ events: { kind: string; at: string; actor: string }[] }>(
       `/missions/${id}/timeline`, t),
+  workspaces: (t?: string) =>
+    get<{ workspaces: { id: string; name: string; budget_currency: string }[] }>(
+      `/workspaces`, t),
+  scenariosList: (id: string, t?: string) =>
+    get<{ scenarios: { scenario_id: string; allocations: unknown[]; objective_value: number; candidate: boolean; savings_vs_baseline: number }[] }>(
+      `/missions/${id}/scenarios`, t),
+  approvalsList: (id: string, t?: string) =>
+    get<{ approvals: { id: string; lane: string; status: string; action_class: string; expires_at: string | null; payload_hash: string }[] }>(
+      `/missions/${id}/approvals`, t),
+  retryTask: (id: string, key: string, t?: string, ik?: string) =>
+    post(`/missions/${id}/tasks/${key}/retry`, {}, t, ik),
+  reviewTask: (id: string, key: string, b: Record<string, unknown>, t?: string) =>
+    post(`/missions/${id}/tasks/${key}/review`, b, t),
+  settle: (id: string, t?: string) =>
+    post(`/missions/${id}/actions/settle`, {}, t),
+  replay: (id: string, rid: string, t?: string) =>
+    post<{ verdict: string; tco_integrity: boolean }>(
+      `/missions/${id}/runs/${rid}/replay`, {}, t),
+  audit: (t?: string, limit?: number) =>
+    get<{ events: { id: string; action: string; object_type: string; mission_id: string | null; actor_id: string | null; request_id: string; reason: string | null; event_hash: string; at: string }[] }>(
+      `/audit${limit ? `?limit=${limit}` : ""}`, t),
+  rules: (t?: string) =>
+    get<{ rules: { version: string; effective_from: string; weights: Record<string, number>; tolerances: Record<string, number>; fx_policy: Record<string, unknown>; changelog: string }[] }>(
+      `/rules`, t),
+  exportFile: async (id: string, fmt: "CSV" | "XLSX" | "PDF", t?: string) => {
+    const res = await fetch(`${BASE}/missions/${id}/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+      body: JSON.stringify({ format: fmt }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new ApiError(res.status, body?.error?.code ?? "export_failed",
+        body?.error?.message ?? `HTTP ${res.status}`, body?.request_id ?? "");
+    }
+    const disp = res.headers.get("Content-Disposition") ?? "";
+    const name = disp.match(/filename=([^;]+)/)?.[1] ?? `report-${id}.${fmt.toLowerCase()}`;
+    return { blob: await res.blob(), filename: name.replace(/"/g, "") };
+  },
 };
 
 export type Span = {

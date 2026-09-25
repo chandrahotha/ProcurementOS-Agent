@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     s3_bucket: str = "pos-artifacts"
     oidc_issuer: str = ""
     oidc_audience: str = ""
+    web_origin: str = "http://localhost:3000"
     ai_timeout_s: int = 30
     ai_circuit_breaker_s: int = 60
 

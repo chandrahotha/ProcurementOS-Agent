@@ -6,9 +6,9 @@ Deterministic math is the source of truth; AI explains and drafts only. Awards, 
 
 ## Where this stands
 
-The backend is built and tested end to end over HTTP (full mission walk W1→W8, auth matrix, idempotency, deny cases). The deterministic engine carries golden vectors. All four binding golden tests (AGENT-001…004) are real and green. The web app builds with every route in place; Mission Control, Evidence, Approval, and Action Center are wired to the API.
+The backend is built and tested end to end over HTTP (full mission walk W1→W8, auth matrix, idempotency, deny cases). The deterministic engine carries golden vectors. All four binding golden tests (AGENT-001…004) are real and green. Every screen is wired to the API, and the full W1→W8 walk passes as a Playwright suite against the seeded synthetic stack.
 
-Current check before every push: `ruff check` + `ruff format --check` clean, `mypy --strict` clean, `pytest` green, `next build` green, `vitest` green, Playwright smoke green.
+Current check before every push: `ruff check` + `ruff format --check` clean, `mypy --strict` clean, `pytest` green (42, incl. AGENT-001…004), `tsc` + `next build` green, `vitest` green, Playwright green (smoke, 360px approval, full W1→W8). Dependency trees audit clean: `pip-audit` and `npm audit` (prod + dev) both report zero findings for project deps.
 
 ## Roadmap
 
@@ -27,12 +27,12 @@ Current check before every push: `ruff check` + `ruff format --check` clean, `my
 | 10 | Workers: enqueue, retry/backoff, poison quarantine | Done | `tests/test_workers.py` |
 | 11 | Web: typed client, P01/P06/P13/P14 wired, drawer, palette, smoke | Done | `web/e2e/smoke.spec.ts` |
 | 12 | Synthetic seed (7 users, 6 suppliers, 12 items, 24 txns) + fixtures | Done | `seed/seed_pos.py`, `seed/fixtures/` |
-| 13 | Remaining screen data views (P02–P05, P07–P12, P15–P16, G tables) | Next | issue #6 (remaining) |
-| 14 | Styling pass (Tailwind/shadcn over the token CSS) | Next | issue #6 (remaining) |
-| 15 | Full W1–W8 Playwright run on seeded demo + rehearsal | Next | issue #6 (remaining) |
-| 16 | Staging deploy, real IdP, rollback rehearsal, release gate sign-off | Next | `docs/RELEASE_GATE.md` |
+| 13 | All screens wired to the API (P02–P16, G13, G16) | Done | `web/app/**`, `web/e2e/full-flow.spec.ts` |
+| 14 | Full W1–W8 Playwright walk on the seeded stack + CI e2e job | Done | `web/playwright.config.ts` (two-server boot) |
+| 15 | Styling pass (Tailwind/shadcn over the token CSS) | Next | hand-rolled tokens implement the 06 §2 contract for now |
+| 16 | Staging deploy, real IdP, rollback rehearsal, release gate sign-off | Next | `docs/RELEASE_GATE.md`, issue #8 |
 
-Rule of thumb: about three-quarters of the MVP build is done and verified. What remains is mostly front-of-house (screens, styling, demo) and operations (staging, rehearsal). Open work is tracked as [GitHub issues](https://github.com/chandrahotha/ProcurementOS-Agent/issues).
+Rule of thumb: the MVP build is done and verified — every screen is wired, the full mission walk passes end to end in CI, and the dependency tree audits clean. What remains is polish (Tailwind/shadcn styling pass) and operations (staging deploy with a real IdP + rehearsal). Open work is tracked as [GitHub issues](https://github.com/chandrahotha/ProcurementOS-Agent/issues).
 
 ## Repository layout
 
@@ -41,7 +41,7 @@ Rule of thumb: about three-quarters of the MVP build is done and verified. What 
 │                 negotiation, approvals, actions, tools, ai, reports, audit, auth
 /engine/       ← deterministic math: sourcing, supplier, cost, risk, scenarios
 /worker/       ← RQ queue: task dispatch, retries, poison quarantine
-/web/          ← Next.js 14: P01–P16 + G screens, typed API client, palette
+/web/          ← Next.js 16 (App Router): P01–P16 + G screens, typed API client, palette
 /alembic/      ← migrations (pos_* schema, expand→migrate→contract)
 /seed/         ← synthetic data only (SYNTHETIC-*, refuses prod DBs)
 /tests/        ← pytest incl. AGENT-001…004 golden suites
@@ -49,7 +49,7 @@ Rule of thumb: about three-quarters of the MVP build is done and verified. What 
 /prerequisite-docs/ ← product brain: vision, PRD, architecture, rules, UX, tests
 ```
 
-- Start with [`prerequisite-docs/README.md`](prerequisite-docs/README.md) for the product index. The brain is the authoritative reference for every build step — do not edit it during implementation; record deviations as ADRs in `docs/adr/`.
-- How to run it locally: [`docs/RUNBOOK.md`](docs/RUNBOOK.md) (binding order: env → DB → migrate → seed → api/workers/web → tests → smoke).
-- Live endpoint inventory: [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md).
+- Start with [`prerequisite-docs/README.md`](prerequisite-docs/README.md) for the product index. The brain is the authoritative reference for every build step — do not edit it during implementation; record deviations as ADRs in `docs/adr/` (see `docs/README.md` for the current set).
+- How to run it locally: [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — the quick start boots the seeded API + web and walks the full mission lifecycle in one command (`npm run e2e --prefix web`).
+- Live endpoint inventory: [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md). Release status per box: [`docs/RELEASE_GATE.md`](docs/RELEASE_GATE.md).
 - This product is fully independent: own database, schema, config, and backlog. Zero dependency on any sibling product (see `docs/adr/0001-standalone-no-sibling-coupling.md`).

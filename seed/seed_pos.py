@@ -83,7 +83,8 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.models.base import Base
-    from app.models.foundation import Document, Item, Supplier, Transaction, User
+    from app.models.foundation import Document, Item, Supplier, Transaction, User, Workspace
+    from app.models.mission import RuleVersion
 
     engine = create_async_engine(db_url)
     async with engine.begin() as conn:
@@ -91,6 +92,8 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
     mk = async_sessionmaker(engine, expire_on_commit=False)
     counts: dict[str, int] = {
         "users": 0,
+        "workspaces": 0,
+        "rules": 0,
         "suppliers": 0,
         "items": 0,
         "transactions": 0,
@@ -103,13 +106,52 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
             if any(not getattr(r, "synthetic", True) for r in rows):
                 raise SystemExit("Refusing: non-synthetic rows present (prod-flagged DB).")
         tenant_id = tenant_code
-        for name, email, _role in USERS:
+        user_ids: dict[str, str] = {}
+        # Role is used later for workspace membership; kept in the tuple.
+        for name, email, _r in USERS:
             uq = await s.execute(
                 select(User).where(User.tenant_id == tenant_id, User.email == email)
             )
-            if uq.scalar_one_or_none() is None:
-                s.add(User(tenant_id=tenant_id, email=email, name=name, api_token=f"dev-{email}"))
+            u = uq.scalar_one_or_none()
+            if u is None:
+                u = User(tenant_id=tenant_id, email=email, name=name, api_token=f"dev-{email}")
+                s.add(u)
+                await s.flush()
                 counts["users"] += 1
+            user_ids[email] = u.id
+        # One demo workspace with everyone aboard (membership is what the
+        # API checks; roles come from USERS so Finance/Compliance lanes work).
+        wq = await s.execute(select(Workspace).where(Workspace.tenant_id == tenant_id))
+        if wq.scalar_one_or_none() is None:
+            s.add(
+                Workspace(
+                    tenant_id=tenant_id,
+                    name="SYN Demo Workspace",
+                    budget_currency="EUR",
+                    members=[{"user_id": user_ids[e], "roles": [r]} for _, e, r in USERS],
+                )
+            )
+            counts["workspaces"] += 1
+        rq_ = await s.execute(select(RuleVersion).where(RuleVersion.tenant_id == tenant_id))
+        if rq_.scalar_one_or_none() is None:
+            s.add(
+                RuleVersion(
+                    tenant_id=tenant_id,
+                    version="rv-1",
+                    effective_from="2026-01-01",
+                    weights={
+                        "quality": 0.25,
+                        "delivery": 0.25,
+                        "financial": 0.2,
+                        "compliance": 0.2,
+                        "geo": 0.1,
+                    },
+                    tolerances={"fx_max_age_days": 30, "award_dual_control_minor": 5_000_000},
+                    fx_policy={"sources": ["ECB"], "rounding": "bankers"},
+                    changelog="Initial synthetic rule set.",
+                )
+            )
+            counts["rules"] += 1
         sup_ids: dict[str, str] = {}
         for code, name, country, _incoterm, _lead in SUPPLIERS:
             sq = await s.execute(

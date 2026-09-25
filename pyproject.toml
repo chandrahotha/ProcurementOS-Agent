@@ -11,7 +11,8 @@ version = "0.1.0"
 description = "Standalone Autonomous Procurement Agent (deterministic engine + approval gates)"
 requires-python = ">=3.12"
 dependencies = [
-  "fastapi>=0.115,<0.117",
+  "fastapi>=0.141,<0.142",
+  "starlette>=1.7,<1.8",
   "uvicorn[standard]>=0.30,<0.33",
   "pydantic>=2.7,<3",
   "pydantic-settings>=2.3,<3",
@@ -23,10 +24,9 @@ dependencies = [
   "rq>=1.16,<2",
   "boto3>=1.34,<2",
   "python-multipart>=0.0.12",
-  "python-jose[cryptography]>=3.3,<4",
+  "pyjwt[crypto]>=2.10,<3",
   "httpx>=0.27,<0.28",
-  "ortools>=9.11,<9.12",
-  "duckdb>=0.10,<1.1",
+  "duckdb>=1.1,<1.6",
   "polars>=1.0,<2",
   "structlog>=24.1,<25",
   "tenacity>=8.3,<9",
@@ -36,8 +36,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.2,<9",
-  "pytest-asyncio>=0.23,<0.25",
+  "pytest>=9,<10",
+  "pytest-asyncio>=1,<2",
   "httpx>=0.27,<0.28",
   "ruff>=0.5,<0.6",
   "mypy>=1.11,<1.12",

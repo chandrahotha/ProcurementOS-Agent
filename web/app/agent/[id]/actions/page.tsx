@@ -1,13 +1,15 @@
 ﻿// P14 Action Center, wired: dry-run first (forced), execute only on ALLOW,
-// idempotent receipts ledger. Blocked attempts show the policy reason.
+// idempotent receipts ledger, settle, then the advance to report.
 "use client";
 
-import { useState } from "react";
+import { useState, use } from "react";
 import { Screen } from "@/components/Screen";
+import { AdvancePanel } from "@/components/AdvancePanel";
 import { api, verdictTone } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
 
-export default function ActionsPage({ params }: { params: { id: string } }) {
+export default function ActionsPage(props: { params: Promise<{ id: string }> }) {
+  const params = use(props.params);
   const mid = params.id;
   const [actionClass, setActionClass] = useState("AWARD");
   const [payload, setPayload] = useState(
@@ -47,6 +49,16 @@ export default function ActionsPage({ params }: { params: { id: string } }) {
     }
   }
 
+  async function settle() {
+    setNote("");
+    try {
+      await api.settle(mid, readToken());
+      setNote("Actions marked settled (executed or explicitly skipped).");
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : "settle failed");
+    }
+  }
+
   const tone = verdictTone(verdict || "DENY");
   return (
     <Screen code="P14" title="Action Center" breadcrumb="Mission / Actions"
@@ -73,6 +85,7 @@ export default function ActionsPage({ params }: { params: { id: string } }) {
         <button type="button" onClick={() => void dryRun()}>Dry-run</button>
         <button type="button" disabled={verdict !== "ALLOW"}
           onClick={() => void execute()}>Execute</button>
+        <button type="button" onClick={() => void settle()}>Mark actions settled</button>
       </div>
       {verdict ? (
         <p role="status" data-tone={tone}>
@@ -83,6 +96,7 @@ export default function ActionsPage({ params }: { params: { id: string } }) {
       {receipt ? (
         <pre className="mono">{JSON.stringify({ ...receipt, replayed }, null, 2)}</pre>
       ) : null}
+      <AdvancePanel missionId={mid} toState="report" label="Advance to report" />
     </Screen>
   );
 }

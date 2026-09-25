@@ -4,6 +4,49 @@
 > how it was checked, and what is still open. Anything that bends the brain
 > gets an ADR link, not a quiet edit.
 
+## 2026-09-24 — Issues 6+7 closed: security deps, all screens wired, full-flow E2E
+
+- Deps (issue 7): the audit findings are gone. npm side: `next` 14→16.3.6
+  via the official codemod (carries the December security patches; React 19),
+  `vitest` 2→5 with `vite` 8 and `@types/node` 26 to settle the peer tree —
+  `npm audit` now reports 0 in both prod and dev. Python side: dropped
+  `python-jose` for `PyJWT` because jose drags `ecdsa`, which carries an
+  unfixable advisory; tests mint real RSA tokens with PyJWT now. Also
+  removed the unused `ortools` dependency (its protobuf 5 pin was the last
+  flagged transitive). The codemod left an `export const instant = false`
+  opt-out on 34 pages; removed them so Turbopack builds clean. One npm
+  ERESOLVE knot took three tries to untangle — vitest 5's peers conflict
+  with the @types/node 20 pin; bumping all three together resolved it.
+- Screens (issue 6): P02 (create with workspace picker), P03 (upload +
+  verdicts + generate plan + advance), P04 (DAG + acknowledge + advance),
+  P05 (board + retry/review), P06 (quick-fill for the 8 required fields +
+  coverage read + advance), P07 (analysis suite + rankings), P08 (TCO
+  build-up table), P09 (risk bands), P10 (manual + optimizer + list),
+  P11 (ladder + draft), P12 (brief + approval request), P13 (live approval
+  queue + decide + quorum advance), P14 (dry-run/execute/settle + advance),
+  P15 (runs + replay), P16 (export with download), G13 (audit table),
+  G16 (rule versions). New backend reads to feed them: /workspaces,
+  /missions/{id}/scenarios, /missions/{id}/approvals, /audit, /rules, plus
+  POST /actions/settle for the action→report gate. CORS added for the web
+  origin only. Seed now creates the demo workspace (all 7 users, roles per
+  persona) and a rule_version row.
+- E2E (issue 6): `web/playwright.config.ts` boots two servers — sqlite-backed
+  API (seeded with SYNTHETIC data) plus `next start` — and the full-flow
+  spec walks W1→W8 through the real UI: create → upload → plan ack →
+  evidence quick-fill → analysis → scenario → draft → brief → two-lane
+  approve (Manager + Finance) → quorum advance → dry-run → execute →
+  settle → export → audit check. Green in ~8s. Three test bugs on the way,
+  all mine: a double `dev-` prefix on tokens, decorative header buttons
+  shadowing form buttons (scoped locators now), and expecting the Finance
+  lane to advance a mission when advance is Writer-only.
+- Still open: staging deploy with a real IdP + rehearsal (issue #8), the
+  Tailwind/shadcn styling pass (kept hand-rolled token CSS for now —
+  it implements the 06 §2 token contract), and worker-on-live-Redis drain.
+
+Checks at close: ruff + format clean, `mypy --strict` clean (71 files),
+`pytest` 42 passed, `tsc` clean, `next build` green (38 routes), `vitest`
+green, Playwright 3/3 (smoke + 360px + full W1→W8).
+
 ## 2026-09-24 — Issues 1–6: API, migrations, OIDC, workers, web, E2E (done)
 
 Closed 1–5, most of 6. Detail per issue is on GitHub; the short version:

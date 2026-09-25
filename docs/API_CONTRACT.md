@@ -28,5 +28,11 @@ replays return the original run/receipt instead of recomputing.
 | GET `/missions/{id}/runs` · POST `…/runs/{rid}/replay` | Replay needs Manager; recomputes from stored inputs, reports match/diverged |
 | POST `/missions/{id}/export` | CSV/XLSX/PDF bytes + manifest; cross-tenant smuggling → 403 |
 | GET `/missions/{id}/timeline` | Timeline events + audit trail, `since` cursor |
+| GET `/workspaces` | Member workspaces (P02 picker; Admin sees all in tenant) |
+| GET `/missions/{id}/scenarios` | Scenario rows (P10 list) |
+| GET `/missions/{id}/approvals` | Approval rows for the mission (P13 queue + quorum read) |
+| GET `/audit` | Tenant-wide hash-chained events, newest first (G13; `limit` ≤ 500) |
+| GET `/rules` | Rule versions in this tenant (G16 read model) |
+| POST `/missions/{id}/actions/settle` | Records approved actions executed/skipped (04 §1 action→report gate) |
 
 `/cases/*` mirrors `/missions/*` with the same handlers.

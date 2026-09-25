@@ -1,4 +1,4 @@
-import "./globals.css";
+﻿import "./globals.css";
 
 export const metadata = {
   title: "ProcurementOS-Agent",
@@ -12,3 +12,4 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   );
 }
+

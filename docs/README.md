@@ -6,12 +6,22 @@ build itself: progress, decisions, contracts, and operations.
 
 | Doc | Purpose |
 |---|---|
-| `BUILD_LOG.md` | Running journal: what landed per phase, test evidence, deviations |
-| `adr/` | Architecture Decision Records — **every deviation from the brain lands here** |
-| `API_CONTRACT.md` | Live endpoint inventory (grows from Phase 2; mirrors `05_WORKFLOWS_AND_API.md`) |
-| `RUNBOOK.md` | Local runbook + CI order + backup/flag discipline (mirrors `10 §3` add-on) |
-| `RELEASE_GATE.md` | Release checklist tracker (mirrors `10 §release gate`) |
+| `BUILD_LOG.md` | Append-only journal: what landed, test evidence, mistakes and their fixes |
+| `adr/` | Architecture Decision Records — every deviation from the brain lives here, never a silent rewrite |
+| `API_CONTRACT.md` | Live endpoint inventory, binding envelope + idempotency notes (mirrors `05_WORKFLOWS_AND_API.md`) |
+| `RUNBOOK.md` | Quick start (sqlite E2E path), compose dev stack, CI order, backup/rollback/flag discipline |
+| `RELEASE_GATE.md` | Release checklist with dated evidence per checked box (mirrors `10 §release gate`) |
 
-Rules: deterministic calculations are source of truth; AI output is untrusted;
-awards/money/contracts/external messages require explicit human approval;
-demo data is synthetic only (`SYNTHETIC-*`).
+Current ADRs:
+
+| ADR | Decision |
+|---|---|
+| 0001 | Fully standalone product — no sibling coupling at runtime or build time |
+| 0002 | Next.js 14 → 16.3.6 security upgrade (React 19, codemod path) |
+| 0003 | OR-Tools dependency removed; greedy allocator is the certified optimizer |
+| 0004 | JWT validation moved from python-jose to PyJWT (unfixable ecdsa advisory) |
+
+Standing rules: deterministic calculations are the source of truth; AI output is
+untrusted; awards, money, contracts, and external messages require explicit human
+approval; demo data is synthetic only (`SYNTHETIC-*`); the brain is never edited —
+deviations get an ADR.

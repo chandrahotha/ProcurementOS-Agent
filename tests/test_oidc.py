@@ -3,11 +3,11 @@
 import base64
 import time
 
+import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
-from jose import jwt
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth import oidc
