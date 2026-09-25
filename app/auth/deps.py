@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import roles as R
+from app.auth.login import principal_from_session
 from app.auth.oidc import AuthError, verify_bearer
 from app.core.config import settings
 from app.db import get_session
@@ -126,6 +127,19 @@ async def get_principal(
         return await _oidc_principal(authorization, session)
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing credentials")
+    # Real sessions first: a bearer token from POST /auth/login resolves to a
+    # live, unexpired, unrevoked session (B-auth).
+    scheme, _, token = authorization.partition(" ")
+    if scheme == "Bearer" and token:
+        found = await principal_from_session(session, token.strip())
+        if found is not None:
+            u, _ = found
+            return Principal(
+                user_id=u.id,
+                tenant_id=u.tenant_id,
+                email=u.email,
+                roles=await _membership_roles(session, u),
+            )
     principal = await _dev_principal(authorization, session)
     if principal is None:
         raise HTTPException(status_code=401, detail="Invalid credentials")

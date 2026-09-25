@@ -20,6 +20,18 @@ class Settings(BaseSettings):
     web_origin: str = "http://localhost:3000"
     ai_timeout_s: int = 30
     ai_circuit_breaker_s: int = 60
+    # Real AI provider (B49): when a base URL is configured, AI touchpoints
+    # call it server-side through run_with_fallback + the hallucination scan;
+    # empty = deterministic notes only (dev default).
+    ai_primary_base_url: str = ""
+    ai_primary_api_key: str = ""
+    ai_primary_model: str = ""
+    ai_fallback_base_url: str = ""
+    ai_fallback_api_key: str = ""
+    ai_fallback_model: str = ""
+    # Transport-gated message delivery: when set, approved outbox messages
+    # really send (POST JSON); empty = messages stay queued (dev default).
+    outbox_webhook_url: str = ""
 
     def validate_auth(self) -> None:
         """Fail hard at boot when production has no OIDC issuer/audience: the

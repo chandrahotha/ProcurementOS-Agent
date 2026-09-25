@@ -13,6 +13,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
+
 
 @dataclass
 class ProviderResult:
@@ -47,6 +49,48 @@ class MockProvider:
         )
 
 
+class HttpxProvider:
+    """Real provider: POSTs to the configured AI endpoint (server-side only,
+    never from the browser). Schema-strict: non-dict payloads are invalid."""
+
+    def __init__(self, base_url: str, api_key: str = "", model: str = "", timeout_s: int = 30):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.timeout_s = timeout_s
+
+    def complete(self, prompt_version: str, inputs: dict[str, Any]) -> ProviderResult:
+        try:
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            r = httpx.post(
+                f"{self.base_url}/completions",
+                json={"model": self.model, "prompt_version": prompt_version, "inputs": inputs},
+                headers=headers,
+                timeout=self.timeout_s,
+            )
+            if r.status_code >= 300:
+                return ProviderResult(
+                    ok=False, error=f"provider_http_{r.status_code}", degraded=True
+                )
+            body = r.json()
+            payload = body.get("data") if isinstance(body, dict) else None
+            if not isinstance(payload, dict):
+                return ProviderResult(ok=False, error="schema_invalid", degraded=True)
+            return ProviderResult(
+                ok=True,
+                payload={
+                    "text": str(payload.get("text", "")),
+                    "evidence_refs": list(payload.get("evidence_refs", [])),
+                    "prompt_version": prompt_version,
+                    "model": self.model or str(payload.get("model", "")),
+                },
+            )
+        except Exception as e:
+            return ProviderResult(ok=False, error=f"provider_unreachable: {e}", degraded=True)
+
+
 @dataclass
 class CircuitBreaker:
     failures: int = 0
@@ -66,8 +110,8 @@ class CircuitBreaker:
 
 
 def run_with_fallback(
-    primary: MockProvider,
-    fallback: MockProvider,
+    primary: MockProvider | HttpxProvider,
+    fallback: MockProvider | HttpxProvider,
     prompt_version: str,
     inputs: dict[str, Any],
     breaker: CircuitBreaker | None = None,

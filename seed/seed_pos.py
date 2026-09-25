@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import os
 import sys
+from typing import Any
 
 USERS = [
     ("Amara Okafor", "amara.buyer1@syn.example", "Buyer"),
@@ -26,6 +27,10 @@ USERS = [
     ("Chen Wei", "chen.compliance@syn.example", "ComplianceReviewer"),
     ("Seed Admin", "admin.seed@syn.example", "Admin"),
 ]
+
+# Synthetic demo credential for the seeded personas (never a real secret;
+# the seed refuses non-synthetic DBs).
+SYN_DEMO_PASSWORD = "syn-Demo-2026!"
 
 SUPPLIERS = [
     ("SYN-ACME", "SYN-ACME Industries", "DE", "DAP", 12),
@@ -83,6 +88,7 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+    from app.auth.login import hash_password
     from app.models.base import Base
     from app.models.foundation import Document, Item, Supplier, Transaction, User, Workspace
     from app.models.mission import RuleVersion
@@ -90,6 +96,19 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
     engine = create_async_engine(db_url)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # create_all never ALTERs existing tables: add newer columns when
+        # missing (dev convenience; staging/prod use alembic migrations).
+        def _ensure_columns(sync_conn: Any) -> None:
+            from sqlalchemy import inspect as sql_inspect
+
+            cols = {c["name"] for c in sql_inspect(sync_conn).get_columns("pos_user")}
+            if "password_hash" not in cols:
+                sync_conn.exec_driver_sql(
+                    "ALTER TABLE pos_user ADD COLUMN password_hash VARCHAR(256)"
+                )
+
+        await conn.run_sync(_ensure_columns)
     mk = async_sessionmaker(engine, expire_on_commit=False)
     counts: dict[str, int] = {
         "users": 0,
@@ -123,19 +142,27 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
             u = uq.scalar_one_or_none()
             if u is None:
                 # B22: tokens are stored hashed — never plaintext, never
-                # compared in plaintext by the API.
+                # compared in plaintext by the API. Passwords are PBKDF2
+                # (real credential login for the synthetic demo).
                 u = User(
                     tenant_id=tenant_id,
                     email=email,
                     name=name,
                     api_token=hashlib.sha256(f"dev-{email}".encode()).hexdigest(),
+                    password_hash=hash_password(SYN_DEMO_PASSWORD),
                 )
                 s.add(u)
                 await s.flush()
                 counts["users"] += 1
-            elif u.api_token != hashlib.sha256(f"dev-{email}".encode()).hexdigest():
-                # Repair plaintext tokens from older seed runs (idempotent).
+            elif (
+                u.api_token != hashlib.sha256(f"dev-{email}".encode()).hexdigest()
+                or not u.password_hash
+            ):
+                # Repair older seed runs (idempotent): plaintext tokens get
+                # hashed; missing passwords get the synthetic demo password.
                 u.api_token = hashlib.sha256(f"dev-{email}".encode()).hexdigest()
+                if not u.password_hash:
+                    u.password_hash = hash_password(SYN_DEMO_PASSWORD)
             user_ids[email] = u.id
         # One demo workspace with everyone aboard; membership is what the
         # API checks and roles come from USERS so lanes work (T14: refreshed

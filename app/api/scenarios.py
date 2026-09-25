@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.common import aud, err, log_timeline, must_mission, not_found, rows_for
 from app.auth.deps import Principal, get_principal
 from app.auth.roles import ADMIN, BUYER, MANAGER
+from app.core.config import settings
 from app.core.envelope import ok
 from app.core.request_id import get_request_id
 from app.db import get_session
@@ -244,16 +245,84 @@ async def decision_brief(
         cline = f"{len(cands)} scenario(s) marked candidate [scenario:candidate]."
     else:
         cline = "No candidate scenario marked yet [scenario:none]."
+    # Real AI touchpoint (B49): when a provider is configured, the evidence
+    # note is AI-drafted through run_with_fallback + the hallucination scan,
+    # persisted as AIJob/AIResult with cited refs. Unconfigured -> the
+    # deterministic note (AI explains only; certified numbers are never
+    # altered by AI text).
+    evidence_note = "Every figure traces to result rows with evidence refs or a recorded waiver."
+    ai_ran = False
+    ai_status = "not_configured"
     brief = {
         "winner_supplier_id": winner.supplier_id if winner else None,
         "winner_tco_minor": winner.tco_minor if winner else None,
         "ranking": [{"supplier_id": c.supplier_id, "tco_minor": c.tco_minor} for c in ranked],
         "candidate_scenarios": [s.scenario_id for s in cands],
         "exceptions": {"stale_fx_suppliers": stale, "lines_ranked": len(sourcing)},
-        "evidence_note": "Every figure traces to result rows with "
-        "evidence refs or a recorded waiver.",
+        "evidence_note": evidence_note,
         "cited_lines": [wline, cline],
+        "ai": {"ran": ai_ran, "status": ai_status},
     }
+    if settings.ai_primary_base_url:
+        import asyncio
+
+        from app.ai.output_scan import scan_output
+        from app.ai.provider import HttpxProvider, MockProvider, run_with_fallback
+        from app.audit.writer import payload_hash as phash
+        from app.models.foundation import AIJob, AIResult
+
+        ai_inputs = {
+            "mission": m.id,
+            "winner": brief["winner_supplier_id"],
+            "ranking": brief["ranking"],
+            "cited_lines": brief["cited_lines"],
+        }
+        res, ai_status = await asyncio.to_thread(
+            run_with_fallback,
+            HttpxProvider(base_url=settings.ai_primary_base_url, timeout_s=settings.ai_timeout_s),
+            MockProvider(),
+            "brief-v1",
+            ai_inputs,
+        )
+        ai_ran = True
+        job = AIJob(
+            tenant_id=m.tenant_id,
+            mission_id=m.id,
+            purpose="brief_note",
+            provider="primary",
+            model_version=str(res.payload.get("model", "mock-1")),
+            prompt_version="brief-v1",
+            input_hash=phash(ai_inputs),
+            output_hash=phash(res.payload),
+            status="ok" if res.ok else "degraded",
+            error=res.error or None,
+            created_by=principal.user_id,
+        )
+        session.add(job)
+        await session.flush()
+        # Hallucination guard: the note is labeled analytical (zero
+        # authority); unreferenced claims would quarantine.
+        scan = scan_output(
+            {
+                "text": str(res.payload.get("text", "")),
+                "evidence_refs": list(res.payload.get("evidence_refs", [])),
+                "label": "analytical",
+            }
+        )
+        if scan["verdict"].startswith("accept") and res.payload.get("text"):
+            session.add(
+                AIResult(
+                    job_id=job.id,
+                    schema_name="brief_note",
+                    payload_json=res.payload,
+                    evidence_refs=list(res.payload.get("evidence_refs", [])),
+                    label="AI draft",
+                )
+            )
+            evidence_note = str(res.payload["text"])
+        await session.commit()
+        brief["evidence_note"] = evidence_note
+        brief["ai"] = {"ran": ai_ran, "status": ai_status}
     # The brief is computed on demand from certified rows (B9): the
     # brief_generated timeline/audit events persist ONCE per mission — not
     # per read — so the gate signal stays real without unbounded growth on

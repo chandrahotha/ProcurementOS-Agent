@@ -4,6 +4,46 @@
 > how it was checked, and what is still open. Anything that bends the brain
 > gets an ADR link, not a quiet edit.
 
+## 2026-09-26 — 55→85 wave: real external actions, real auth, real AI touchpoint, staging rehearsal
+
+- **Real external actions (the 'action' claim becomes real):** new
+  `pos_purchase_order` / `pos_budget_reservation` / `pos_message_outbox`
+  tables (pos_004). `issue_po_intent` now issues a real PO of record with a
+  server-computed award value (never client-declared) and a deterministic
+  PO number; `reserve_budget_intent` creates a real budget hold;
+  `send_supplier_message` writes a transactional outbox row with
+  transport-gated delivery (`OUTBOX_WEBHOOK_URL`; empty = stays queued — the
+  approval is what authorized it either way). Execute receipts carry real
+  object refs, and P14 shows a "Real objects of record" section. Read
+  endpoints: `/purchase-orders`, `/budget-reservations`, `/messages`.
+- **Real auth:** PBKDF2-SHA256 salted password login (stdlib only) +
+  `pos_session` bearer tokens hashed at rest, expiry-bound, revocable.
+  `POST /auth/login`, `/auth/me`, `/auth/logout`; sessions resolve before
+  the dev fallback; the seed provisions the synthetic demo password. Web
+  login takes email + password.
+- **Real AI touchpoint:** `HttpxProvider` (server-side, schema-strict) +
+  `run_with_fallback` + the hallucination scan wired into the Decision
+  Brief when `AI_PRIMARY_BASE_URL` is configured; AIJob/AIResult rows
+  persist with cited refs; the brief carries `ai: {ran, status}`; G17 lists
+  the tenant's AI history. Unconfigured = deterministic notes only.
+- **Staging rehearsal (in-network):** compose stack (Postgres 15432, Redis
+  16379) — all four migrations ran on real Postgres, full seed, workers
+  draining `pos:tasks` with unique per-instance names (RQ refuses duplicate
+  worker names; container PID is always 1), real password login, and the
+  full walk to a REAL executed PO with idempotent replay
+  (`seed/rehearsal.py`). Docker Desktop on this machine dies between
+  sessions, so host port-forwarding is flaky — the rehearsal runs
+  in-network (`docker run --network ...`).
+- **CI schedule (owner requirement, strict):** the full pipeline runs ONCE
+  per week — Monday 03:00 UTC (~4x/month) — plus manual
+  `workflow_dispatch`; no push/PR triggers (`gh workflow run ci` forces a
+  run).
+
+Checks: ruff + format clean, `mypy --strict` clean (72 files), `pytest` 59
+green, `tsc` + `next build` + `vitest` green, lint 0 errors. Rehearsal
+evidence as listed.
+
+
 ## 2026-09-25 — Full-repo audit (232 findings) + six fix waves + Slice 15 design system
 
 Four parallel deep audits (backend, frontend, engine+tests, infra) produced

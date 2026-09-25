@@ -226,6 +226,7 @@ async def action_execute(
             session,
             tenant_id=tenant_id,
             mission_id=mission_id,
+            workspace_id=m.workspace_id,
             action_class=body.action_class,
             payload=body.payload,
             tool_name=body.tool_name,

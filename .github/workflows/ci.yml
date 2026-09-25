@@ -1,9 +1,12 @@
 name: ci
 
+# STRICT schedule per owner requirement (2026-09-26): the full pipeline runs
+# ONCE per week — Monday 03:00 UTC (~4x/month) — and on manual dispatch only.
+# There are no push/PR triggers; use `gh workflow run ci` to force a run.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
 
 # Cancel overlapping runs on the same ref (bugs/04-infra-ci.md I27).
 concurrency:

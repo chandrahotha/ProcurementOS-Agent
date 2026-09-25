@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Float, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import TenantScoped
@@ -26,12 +27,25 @@ class User(TenantScoped):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     mfa_enrolled: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(32), default="active")
+    # Real credential login (PBKDF2-SHA256, salted); sessions below.
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # Dev/test only: bearer token handle. Prod uses OIDC subjects.
     api_token: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
     # Prod OIDC subject (globally unique per issuer); null until linked.
     oidc_sub: Mapped[str | None] = mapped_column(String(256), nullable=True, unique=True)
 
     __table_args__ = (Index("ix_pos_user_tenant_email", "tenant_id", "email", unique=True),)
+
+
+class UserSession(TenantScoped):
+    """Real login sessions: bearer tokens hashed at rest with expiry (B-auth)."""
+
+    __tablename__ = f"{PREFIX}session"
+    user_id: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_ip: Mapped[str] = mapped_column(String(64), default="")
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Role(TenantScoped):

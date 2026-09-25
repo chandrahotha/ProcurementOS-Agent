@@ -247,6 +247,134 @@ async def settle_actions(
     return ok({"mission_id": m.id, "settled": True}, rid)
 
 
+@router.get("/purchase-orders")
+async def list_purchase_orders(
+    request: Request,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Real POs of record (A2/A3): issued ONLY by the issue_po_intent tool
+    after quorum approval."""
+    rid = get_request_id(request)
+    from app.models.external import PurchaseOrder
+
+    rows = (
+        (
+            await session.execute(
+                select(PurchaseOrder)
+                .where(PurchaseOrder.tenant_id == principal.tenant_id)
+                .order_by(PurchaseOrder.created_at.desc())
+                .limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return ok(
+        {
+            "purchase_orders": [
+                {
+                    "id": r.id,
+                    "mission_id": r.mission_id,
+                    "po_number": r.po_number,
+                    "supplier_id": r.supplier_id,
+                    "status": r.status,
+                    "total_minor": r.total_minor,
+                    "lines": r.lines,
+                    "at": r.created_at.isoformat(),
+                }
+                for r in rows
+            ]
+        },
+        rid,
+    )
+
+
+@router.get("/budget-reservations")
+async def list_budget_reservations(
+    request: Request,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Real budget holds (A2/A3): reserved ONLY by reserve_budget_intent
+    after approval."""
+    rid = get_request_id(request)
+    from app.models.external import BudgetReservation
+
+    rows = (
+        (
+            await session.execute(
+                select(BudgetReservation)
+                .where(BudgetReservation.tenant_id == principal.tenant_id)
+                .order_by(BudgetReservation.created_at.desc())
+                .limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return ok(
+        {
+            "reservations": [
+                {
+                    "id": r.id,
+                    "mission_id": r.mission_id,
+                    "workspace_id": r.workspace_id,
+                    "status": r.status,
+                    "amount_minor": r.amount_minor,
+                    "currency": r.currency,
+                    "at": r.created_at.isoformat(),
+                }
+                for r in rows
+            ]
+        },
+        rid,
+    )
+
+
+@router.get("/messages")
+async def list_outbox(
+    request: Request,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Transactional outbox (A2/A3): approved messages queued for delivery;
+    transport-gated send."""
+    rid = get_request_id(request)
+    from app.models.external import MessageOutbox
+
+    rows = (
+        (
+            await session.execute(
+                select(MessageOutbox)
+                .where(MessageOutbox.tenant_id == principal.tenant_id)
+                .order_by(MessageOutbox.created_at.desc())
+                .limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return ok(
+        {
+            "messages": [
+                {
+                    "id": r.id,
+                    "mission_id": r.mission_id,
+                    "supplier_id": r.supplier_id,
+                    "recipient": r.recipient,
+                    "subject": r.subject,
+                    "status": r.status,
+                    "sent_at": r.sent_at.isoformat() if r.sent_at else None,
+                    "at": r.created_at.isoformat(),
+                }
+                for r in rows
+            ]
+        },
+        rid,
+    )
+
+
 @router.get("/suppliers")
 async def list_suppliers(
     request: Request,

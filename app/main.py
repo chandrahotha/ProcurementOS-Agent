@@ -16,6 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api import (
     analysis,
     approvals_actions,
+    auth_routes,
     evidence,
     misc,
     missions,
@@ -51,6 +52,7 @@ for router in (
     scenarios.router,
     approvals_actions.router,
     runs_export.router,
+    auth_routes.router,
     misc.router,
 ):
     app.include_router(router, prefix=API_PREFIX)

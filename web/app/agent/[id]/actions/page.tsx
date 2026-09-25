@@ -9,6 +9,13 @@ import { api, stateForError, verdictTone } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
 import { Badge, Card, Field, StateBadge } from "@/components/ui";
 
+type Receipt = Record<string, unknown>;
+type External = {
+  purchase_orders: { id: string; po_number: string; supplier_id: string; status: string; total_minor: number; at: string }[];
+  reservations: { id: string; mission_id: string; status: string; amount_minor: number; currency: string; at: string }[];
+  messages: { id: string; subject: string; supplier_id: string; status: string; sent_at: string | null; at: string }[];
+};
+
 function hashPayload(payload: string): string {
   // Simple client-side hash of the payload text (F12): the execute
   // idempotency key changes when the payload changes, so a stale ALLOW can
@@ -30,8 +37,26 @@ export default function ActionsPage(props: { params: Promise<{ id: string }> }) 
   const [policy, setPolicy] = useState("");
   const [receipt, setReceipt] = useState<Record<string, unknown> | null>(null);
   const [replayed, setReplayed] = useState(false);
+  const [external, setExternal] = useState<External | null>(null);
   const [note, setNote] = useState("");
   const [denied, setDenied] = useState(false);
+
+  async function loadExternal() {
+    // Real objects of record (A3): POs, reservations, outbox messages —
+    // what the gated tools actually produced for this mission.
+    const [po, br, msg] = await Promise.all([
+      api.purchaseOrders(readToken()).catch(() => null),
+      api.budgetReservations(readToken()).catch(() => null),
+      api.outboxMessages(readToken()).catch(() => null),
+    ]);
+    const mine = <T extends { mission_id: string }>(rows: T[] | null | undefined): T[] =>
+      (rows ?? []).filter((r) => r.mission_id === mid);
+    setExternal({
+      purchase_orders: mine(po?.purchase_orders),
+      reservations: mine(br?.reservations),
+      messages: mine(msg?.messages),
+    });
+  }
 
   // Stale-gate reset (F11): any change to what is being dry-run clears the
   // verdict, so Execute stays disabled until the NEW payload validates.
@@ -75,6 +100,7 @@ export default function ActionsPage(props: { params: Promise<{ id: string }> }) 
       setReceipt(out.receipt);
       setReplayed(out.replayed);
       setNote(out.replayed ? "Already done — original receipt returned." : "Executed.");
+      void loadExternal();
     } catch (e) {
       setNote(e instanceof Error ? e.message : "execute failed");
     }
@@ -132,6 +158,42 @@ export default function ActionsPage(props: { params: Promise<{ id: string }> }) 
       {note ? <p role="status"><StateBadge state="info" /> {note}</p> : null}
       {receipt ? (
         <pre className="mono">{JSON.stringify({ ...receipt, replayed }, null, 2)}</pre>
+      ) : null}
+      {external && (external.purchase_orders.length || external.reservations.length || external.messages.length) ? (
+        <section>
+          <h2 className="mb-3 text-sm font-semibold tracking-tight">Real objects of record</h2>
+          <div className="grid gap-2">
+            {external.purchase_orders.map((po) => (
+              <div key={po.id} className="card row flex-wrap items-center justify-between gap-3 py-3">
+                <div className="row gap-3">
+                  <StateBadge state="ok" />
+                  <span className="mono text-sm font-semibold">{po.po_number}</span>
+                  <span className="text-xs text-text-2">{po.supplier_id}</span>
+                </div>
+                <span className="mono text-sm">{po.total_minor} minor</span>
+              </div>
+            ))}
+            {external.reservations.map((br) => (
+              <div key={br.id} className="card row flex-wrap items-center justify-between gap-3 py-3">
+                <div className="row gap-3">
+                  <StateBadge state="ok" />
+                  <span className="text-sm font-semibold">Budget reserved</span>
+                </div>
+                <span className="mono text-sm">{br.amount_minor} {br.currency}</span>
+              </div>
+            ))}
+            {external.messages.map((m) => (
+              <div key={m.id} className="card row flex-wrap items-center justify-between gap-3 py-3">
+                <div className="row gap-3">
+                  <StateBadge state={m.status === "sent" ? "ok" : "pending"} />
+                  <span className="text-sm font-semibold">{m.subject}</span>
+                  <span className="text-xs text-text-2">{m.supplier_id}</span>
+                </div>
+                <Badge tone={m.status === "sent" ? "ok" : "warn"}>{m.status}</Badge>
+              </div>
+            ))}
+          </div>
+        </section>
       ) : null}
       <AdvancePanel missionId={mid} toState="report" label="Advance to report" />
     </Screen>

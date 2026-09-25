@@ -57,6 +57,8 @@ select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S106"]
 "engine/tests/**/*.py" = ["S101"]
+# Synthetic demo credential only (the seed refuses non-synthetic DBs).
+"seed/seed_pos.py" = ["S105", "S106"]
 "app/auth/deps.py" = ["B008"]
 "app/api/*.py" = ["B008"]
 "app/main.py" = ["B008"]

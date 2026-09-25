@@ -10,6 +10,8 @@ from __future__ import annotations
 
 
 def main() -> None:
+    import os
+
     from redis import Redis
     from rq import Connection, Queue, Worker
 
@@ -17,9 +19,11 @@ def main() -> None:
 
     with Connection(Redis.from_url(settings.redis_url)):
         queue = Queue("pos:tasks")
-        worker = Worker([queue], name="pos-task-worker")
-        # No max_jobs: the worker is the container's main process and must
-        # drain the queue indefinitely, never exit silently after N jobs (B13).
+        # Unique per instance: replicas share the queue and the container
+        # main process is always PID 1, so the name carries a random suffix
+        # (RQ refuses a duplicate worker name at birth).
+        name = f"pos-task-worker-{os.getpid()}-{os.urandom(3).hex()}"
+        worker = Worker([queue], name=name)
         worker.work()
 
 

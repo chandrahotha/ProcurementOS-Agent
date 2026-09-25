@@ -228,6 +228,16 @@ export const api = {
     get<{ version: number; diff: Record<string, unknown> }>(`/missions/${id}/plans/${version}/diff`, t),
   updateMission: (id: string, b: Record<string, unknown>, t?: string) =>
     patch<Mission>(`/missions/${id}`, b, t),
+  login: (b: { email: string; password: string }) =>
+    post<{ token: string; token_type: string; email: string; name: string; tenant_id: string }>(`/auth/login`, b),
+  me: (t?: string) =>
+    get<{ user_id: string; email: string; roles: string[]; tenant_id: string }>("/auth/me", t),
+  purchaseOrders: (t?: string) =>
+    get<{ purchase_orders: { id: string; mission_id: string; po_number: string; supplier_id: string; status: string; total_minor: number; lines: { line_id: string; total_minor: number }[]; at: string }[] }>("/purchase-orders", t),
+  budgetReservations: (t?: string) =>
+    get<{ reservations: { id: string; mission_id: string; workspace_id: string; status: string; amount_minor: number; currency: string; at: string }[] }>("/budget-reservations", t),
+  outboxMessages: (t?: string) =>
+    get<{ messages: { id: string; mission_id: string; supplier_id: string; recipient: string; subject: string; status: string; sent_at: string | null; at: string }[] }>("/messages", t),
   rules: (t?: string) =>
     get<{ rules: { version: string; effective_from: string; weights: Record<string, number>; tolerances: Record<string, number>; fx_policy: Record<string, unknown>; changelog: string }[] }>(
       `/rules`, t),
