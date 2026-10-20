@@ -16,6 +16,8 @@ import asyncio
 import hashlib
 import os
 import sys
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 USERS = [
@@ -33,12 +35,15 @@ USERS = [
 SYN_DEMO_PASSWORD = "syn-Demo-2026!"
 
 SUPPLIERS = [
-    ("SYN-ACME", "SYN-ACME Industries", "DE", "DAP", 12),
-    ("SYN-BALTIC", "SYN-Baltic Parts", "LV", "EXW", 20),
-    ("SYN-COBALT", "SYN-Cobalt Works", "PL", "DAP", 15),
-    ("SYN-DELTA", "SYN-Delta Forge", "TR", "CIF", 30),
-    ("SYN-EMERALD", "SYN-Emerald Supply", "IE", "DDP", 5),
-    ("SYN-NORD", "SYN-Foundry Nord", "SE", "FCA", 45),
+    # code, name (sector + location), country, default incoterm, lead time (days).
+    # The records are synthetic. The identifiers are opaque; the names
+    # describe a sector and a location rather than naming an organisation.
+    ("SYN-SUP-01", "SYN Precision Machining (Coimbatore)", "IN", "EXW", 12),
+    ("SYN-SUP-02", "SYN Sheet Metal & Fabrication (Pune)", "IN", "FOB", 20),
+    ("SYN-SUP-03", "SYN Castings & Forgings (Raipur)", "IN", "DDP", 15),
+    ("SYN-SUP-04", "SYN Bearings & Power Transmission (Rajkot)", "IN", "CIF", 30),
+    ("SYN-SUP-05", "SYN Industrial Sealants & Adhesives (Vadodara)", "IN", "DAP", 5),
+    ("SYN-SUP-06", "SYN Imported Tooling (Stuttgart)", "DE", "FCA", 45),
 ]
 
 ITEMS = [
@@ -57,20 +62,20 @@ ITEMS = [
 ]
 
 DOCUMENTS = [
-    ("quote-acme.pdf", "quote", "application/pdf"),
-    ("quote-baltic.pdf", "quote", "application/pdf"),
-    ("quote-cobalt.pdf", "quote", "application/pdf"),
-    ("quote-delta.pdf", "quote", "application/pdf"),
-    ("quote-emerald.pdf", "quote", "application/pdf"),
-    ("quote-nord.pdf", "quote", "application/pdf"),
-    ("contract-acme.pdf", "contract", "application/pdf"),
-    ("contract-delta.pdf", "contract", "application/pdf"),  # liability-shift clause
+    ("quote-syn-sup-01.pdf", "quote", "application/pdf"),
+    ("quote-syn-sup-02.pdf", "quote", "application/pdf"),
+    ("quote-syn-sup-03.pdf", "quote", "application/pdf"),
+    ("quote-syn-sup-04.pdf", "quote", "application/pdf"),
+    ("quote-syn-sup-05.pdf", "quote", "application/pdf"),
+    ("quote-syn-sup-06.pdf", "quote", "application/pdf"),
+    ("contract-syn-sup-01.pdf", "contract", "application/pdf"),
+    ("contract-syn-sup-04.pdf", "contract", "application/pdf"),  # liability-shift clause
     (
         "price-history.xlsx",
         "price_history",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ),
-    ("cert-iso.pdf", "cert", "application/pdf"),
+    ("cert-iso-9001.pdf", "cert", "application/pdf"),
     ("HOSTILE-001.pdf", "quote", "application/pdf"),  # embedded approve-X instruction
     ("HOSTILE-002.pdf", "quote", "application/pdf"),  # OCR-poisoned scan
     ("HOSTILE-003.docm", "quote", "application/pdf"),  # macro: rejected in quarantine
@@ -82,6 +87,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--tenant", required=True, help="Tenant code, e.g. SYN-TENANT-01")
     p.add_argument("--db-url", default=os.environ.get("DATABASE_URL", ""), help="Async DB URL")
     return p.parse_args(argv)
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def _fixture_digest(filename: str) -> tuple[int, str]:
+    """The real size and SHA-256 of a seeded document's bytes.
+
+    T15: the seeded rows used to hash the *filename*, so every document
+    carried a hash that described no file. This reads the fixture the
+    document claims to be and hashes those bytes. A missing fixture is a
+    hard error rather than a placeholder: the seed must not invent a
+    document it does not have.
+    """
+    path = FIXTURES / filename
+    if not path.exists():
+        raise FileNotFoundError(
+            f"seed fixture {filename!r} is missing from {FIXTURES}; "
+            "run: python seed/make_fixtures.py"
+        )
+    content = path.read_bytes()
+    return len(content), hashlib.sha256(content).hexdigest()
 
 
 async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
@@ -173,7 +200,7 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
             ws = Workspace(
                 tenant_id=tenant_id,
                 name="SYN Demo Workspace",
-                budget_currency="EUR",
+                budget_currency="INR",
                 members=[],
             )
             s.add(ws)
@@ -204,8 +231,11 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
                         "compliance": 0.2,
                         "geo": 0.1,
                     },
-                    tolerances={"fx_max_age_days": 30, "award_dual_control_minor": 5_000_000},
-                    fx_policy={"sources": ["ECB"], "rounding": "bankers"},
+                    tolerances={
+                        "fx_max_age_days": 30,
+                        "award_dual_control_minor": 50_000_000,
+                    },
+                    fx_policy={"sources": ["RBI"], "rounding": "bankers"},
                     changelog="Initial synthetic rule set.",
                 )
             )
@@ -238,7 +268,7 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
                     )
                 )
                 counts["items"] += 1
-        # 24 transactions across 12 months; SYN-NORD thin (2 txns); SYN-DELTA
+        # 24 transactions across 12 months; SYN-SUP-06 thin (2 txns); SYN-SUP-04
         # PPM spike. T12: re-runs top UP to 24 (deterministic by index).
         codes = [c for c, *_ in SUPPLIERS]
         existing = (
@@ -247,17 +277,17 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
             .all()
         )
         if len(existing) < 24:
-            nord = sum(1 for t in existing if t.supplier_id == sup_ids["SYN-NORD"])
+            nord = sum(1 for t in existing if t.supplier_id == sup_ids["SYN-SUP-06"])
             n = len(existing)
             i = n
             while n < 24:
                 code = codes[i % len(codes)]
-                if code == "SYN-NORD":
+                if code == "SYN-SUP-06":
                     if nord >= 2:
                         i += 1
                         continue  # thin-data supplier: capped at 2 txns
                     nord += 1
-                defects = 40 if (code == "SYN-DELTA" and n % 6 == 0) else (1 if n % 7 == 0 else 0)
+                defects = 40 if (code == "SYN-SUP-04" and n % 6 == 0) else (1 if n % 7 == 0 else 0)
                 s.add(
                     Transaction(
                         tenant_id=tenant_id,
@@ -266,9 +296,9 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
                         on_time=(i % 5 != 0),
                         accepted=(i % 9 != 0),
                         defects=defects,
-                        price_minor=1000 + i * 37,
-                        currency="EUR" if i % 3 else "USD",
-                        ordered_at=f"2025-{(i % 12) + 1:02d}-15T00:00:00Z",
+                        price_minor=124000 + i * 370,
+                        currency="INR" if i % 3 else "USD",
+                        ordered_at=datetime(2025, (i % 12) + 1, 15, tzinfo=UTC),
                         synthetic=True,
                     )
                 )
@@ -291,6 +321,11 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
                     if filename == "HOSTILE-003.docm"
                     else mime
                 )
+                # T15: the hash and the size describe the real file, not the
+                # filename. The fixture is read from disk and hashed as it
+                # is; a document row that claims a hash no file has is a
+                # lie the audit trail would repeat.
+                size, sha = _fixture_digest(filename)
                 s.add(
                     Document(
                         tenant_id=tenant_id,
@@ -298,8 +333,8 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
                         kind=kind,
                         filename=filename,
                         mime=true_mime,
-                        size=1024 + len(filename) * 7,
-                        sha256=hashlib.sha256(filename.encode()).hexdigest(),
+                        size=size,
+                        sha256=sha,
                         status="quarantined" if hostile else "clean",
                         synthetic=True,
                     )

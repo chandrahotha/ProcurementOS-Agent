@@ -110,7 +110,7 @@ def main() -> None:
     # W1 intake: upload a clean quote so the checklist gate opens.
     up = upload(
         f"/missions/{mid}/documents",
-        "QUOTE-ACME-001.pdf",
+        "QUOTE-SYN-SUP-01-001.pdf",
         b"%PDF-1.4 rehearsal quote",
         tok,
     )
@@ -188,7 +188,7 @@ def main() -> None:
                     "qty": "48",
                     "uom": "pcs",
                     "unit_price_minor": 90,
-                    "currency": "EUR",
+                    "currency": "INR",
                     "tax_mode": "inclusive",
                 },
             ],

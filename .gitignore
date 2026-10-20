@@ -36,6 +36,17 @@ dist/
 build/
 coverage/
 htmlcov/
+.coverage
+coverage.xml
+# Local artefacts from the operational drills
+backups/
+rollback_scratch.db
+restored.db
+# The demo stack's own database and logs
+pos_demo.db
+pos_demo_api.log
+pos_demo_web.log
+pos_dev.db
 # Scratch DBs from local seed/E2E runs
 *.db
 *.sqlite3
