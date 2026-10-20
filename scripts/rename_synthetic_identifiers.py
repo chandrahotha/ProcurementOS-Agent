@@ -90,6 +90,12 @@ FILE_RENAMES: tuple[tuple[str, str], ...] = (
 
 SKIP_DIRS = {".git", "node_modules", ".next", "__pycache__", ".kilo", ".sdlc", "backups"}
 
+#: The product brain is read-only. The repository's own rule is that
+#: deviations from it are recorded as ADRs, never by rewriting it, so the
+#: migration must not touch it either. The deviation is recorded in
+#: docs/adr/0011-thesis-context-inr-and-evidence-classes.md.
+SKIP_PATHS = {"prerequisite-docs"}
+
 
 def _files() -> list[Path]:
     """Every text file to rewrite, with the noisy directories pruned.
@@ -103,9 +109,18 @@ def _files() -> list[Path]:
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for name in filenames:
             path = Path(dirpath) / name
-            if path.suffix in SUFFIXES:
+            if path.suffix in SUFFIXES and not _in_brain(path):
                 out.append(path)
     return out
+
+
+def _in_brain(path: Path) -> bool:
+    """True when the path is inside the read-only product brain."""
+    try:
+        relative = path.relative_to(ROOT)
+    except ValueError:
+        return False
+    return bool(SKIP_PATHS.intersection(relative.parts[:1]))
 
 
 def main(argv: list[str] | None = None) -> int:

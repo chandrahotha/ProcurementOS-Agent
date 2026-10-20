@@ -29,12 +29,12 @@ Status: `[ ]` open · `[x]` fixed · `[~]` deferred with ADR.
 - [x] **I17** Floating `:latest` tags on minio + mock-ai. `docker-compose.yml:33,50`. → Pin versions.
 - [x] **I18** `[tool.alembic]` in pyproject is dead config at pinned alembic 1.13 (pyproject support added in 1.16). `pyproject.toml:76-77`. → Remove.
 - [x] **I19** Stale mypy override for removed `jose`. `pyproject.toml:72-74`. → Drop.
-- [~] **I20** Stale tool pins exclude released versions (ruff<0.6, mypy<1.12, alembic<1.14); no Python lockfile. `pyproject.toml:42-44`. → Raise ranges + lock.
+- [x] **I20** Stale tool pins exclude released versions (ruff<0.6, mypy<1.12, alembic<1.14); no Python lockfile. `pyproject.toml:42-44`. → Raise ranges + lock. **Closed 2026-10-20** (ADR 0008): the pins now admit the current releases (`ruff>=0.17,<0.18`, `mypy>=2.4,<3`, `alembic>=1.14,<1.15`), and the code is clean under them — which is how two real `mypy --strict` errors and one formatting difference came to light. `requirements.lock` pins the resolved set; `scripts/lock.py --check` verifies the lock still covers the declared ranges, so a range bump without a refreshed lock fails CI.
 - [x] **I21** Redis CI service has no health gate. `ci.yml:56-58`. → `--health-cmd="redis-cli ping"`.
 - [x] **I22** Migration env in api image incomplete — `alembic.ini` not copied; compose never runs migrations. `Dockerfile.api:6`. → Copy ini or drop.
 - [x] **I23** web tsconfig: `noUncheckedIndexedAccess` + `noImplicitOverride` absent. `web/tsconfig.json:3-30`. → Enable.
 - [x] **I24** Web typecheck runs before `next build` generates ambient types (next-env.d.ts gitignored). `ci.yml:108,110`. → Build first.
-- [~] **I25** ruff S106 ignored for ALL tests — can mask real credentials in fixtures. `pyproject.toml:58-60`. → Scope to fixtures.
+- [x] **I25** ruff S106 ignored for ALL tests - can mask real credentials in fixtures. `pyproject.toml:58-60`. → Scope to fixtures. **Closed 2026-10-20**: the blanket exemption is gone. The one synthetic test token that still trips the rule carries a line-scoped `noqa` with the reason attached, so a real credential in a test fixture is flagged again.
 
 ## Improvements
 
@@ -51,3 +51,44 @@ Status: `[ ]` open · `[x]` fixed · `[~]` deferred with ADR.
 - [x] **I36** `.env.example` header says "NO VALUES, keys only" but carries values. → Blank values or reword.
 - [x] **I37** ~13 documented env keys consumed by nothing (REQUEST_ID_HEADER, S3_*, OIDC_CLIENT_*, AI_PRIMARY_*, MFA_ENFORCED, SEED_ADMIN_*). `.env.example` vs `app/core/config.py:6-21`. → Add Settings fields or remove keys.
 - [x] **I38** README says e2e runs "against the seeded synthetic stack" — actually sqlite-backed API with no postgres/redis/minio. `README.md:9`. → Reword.
+
+## Completion pass (2026-10-20) — C7–C12
+
+- [x] **C7** The pipeline had no push or pull-request trigger, so a
+  regression could sit on `main` for up to seven days and the README's
+  "check before every push" was a habit rather than a gate.
+  `.github/workflows/ci.yml` → a fast chain on every push and PR, with
+  the heavy legs (Postgres, containers, Playwright) still weekly. ADR 0008.
+- [x] **C8** The `integration` marker was registered but used by no test,
+  so `pytest -m integration` collected nothing and the CI job that
+  claimed to be the "Postgres leg" ran the sqlite suite twice.
+  `tests/test_postgres.py` → five real Postgres-backed tests.
+- [x] **C9** `alembic/versions/a7c41d92e503_pos_003_task_uniqueness.py`
+  used `DELETE ... USING`, which is Postgres-only. The migration chain
+  died on sqlite with "near \"a\": syntax error", so the release gate's
+  "round-trip verified on scratch sqlite" was never true. → standard
+  SQL that both engines run, and `tests/test_migrations.py` runs the
+  round trip on every push.
+- [x] **C10** `alembic.ini` committed a database password in its default
+  URL, and `.env.example` documented the variable as
+  `DATABASE_URL_SYNC` while `alembic/env.py` reads `DATABASE_SYNC_URL` —
+  so a copied template set the wrong key and the migration silently used
+  the committed default. → the default carries no password and the
+  migration refuses to run without one; the template is correct.
+- [x] **C11** `worker/queue.py` opened Redis with the default socket
+  timeout, which is "wait forever", and the acknowledge endpoint opened
+  a connection per task. A down Redis turned one acknowledgement into a
+  ten-task hang. → a one-second connect timeout and a single queue probe
+  before the loop.
+- [x] **C12** The dependency lock check re-resolved "latest" on every
+  run, so a new PyPI release would fail CI for no reason. The check is
+  now *consistency* with the declared ranges, which is the mistake worth
+  catching.
+- [x] **C13** The release gate's "Env/credentials separated per
+  environment" box was unticked and unanswerable. →
+  `deploy/env/{dev,staging,prod}.env.example` and
+  `scripts/verify_env.py`, which refuses a staging or production file
+  that still carries a development credential.
+- [x] **C14** The release gate's monitoring box claimed OpenTelemetry
+  wiring that did not exist. → `app/core/observe.py` +
+  `/api/v1/ops/metrics` + `scripts/task_age.py`. ADR 0010.

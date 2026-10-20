@@ -102,3 +102,60 @@ Status: `[ ]` open · `[x]` fixed · `[~]` deferred with ADR.
 - [x] **F77** Client types vs payloads: tasks type drops `plan_version`; Run omits `tool_versions`. → Reconcile + surface.
 - [x] **F78** No error.tsx / not-found.tsx / loading.tsx anywhere — uncaught render error crashes app; bad id gets default 404. → Add all three.
 - [x] **F79** No middleware.ts — protected routes publicly reachable. → Auth check + redirect.
+
+## Completion pass (2026-10-20) - F80-F82
+
+- [x] **F80** The smoke test loaded a deep link with no token, so the API
+  answered 401, the client cleared the token and navigated to `/login` by
+  design (F20) - and the page under test unmounted before the assertion
+  could run. The test therefore passed or failed depending on a race
+  between the redirect and the assertion. It was reported as "Playwright
+  3/3 green" while flaking roughly one run in three.
+  `web/e2e/smoke.spec.ts` -> both smoke tests authenticate first, and the
+  approval assertion is scoped to the header so a real approval card's
+  own Approve button cannot trip strict mode (F26). Five consecutive runs
+  green.
+- [x] **F81** F16 claimed abort/stale-response guards on every fetch
+  effect; the screens had none - a response that arrived after the screen
+  had moved on overwrote the newer screen's data. The four mission
+  screens that fetched in an effect now fetch inside the effect with a
+  cancellation flag, and the shared fetch lives at module level so the
+  effect and the reload-after-mutation path use one implementation.
+- [x] **F82** 17 lint warnings beyond the deliberately accepted
+  `react-hooks/set-state-in-effect` rule: four unused imports, five dead
+  `eslint-disable` directives, and eight `exhaustive-deps` warnings that
+  the dead directives were meant to silence. -> all removed; the remaining
+  10 warnings are the one rule the eslint config downgrades on purpose,
+  with the reason written down there.
+
+## Completion pass, second wave (2026-10-20) - F83-F87
+
+- [x] **F83** The plan's task rows carried `{"depends_on": [...]}` as the
+  tool's *arguments*, so every task with a required argument was dispatched
+  with the wrong payload and blocked itself. The plan acknowledged and
+  then could not do anything. `app/api/plans_tasks.py` -> the plan
+  skeleton now carries the canonical call shape per tool
+  (`app/plans/service.py::CANONICAL_ARGS`) and the task row stores the
+  tool's own arguments.
+- [x] **F84** With no broker reachable, an acknowledged plan left all ten
+  tasks in `queued` for ever: the mission never moved and nothing said
+  why. `worker/queue.py` -> `execute_plan_tasks` runs the plan in the API
+  process, in dependency order, with the same `apply_task`, the same
+  policy checks and the same audit events. The acknowledge response
+  reports which transport ran it.
+- [x] **F85** The Action Center and the Advance Panel carried a
+  hard-coded placeholder payload (`{"supplier_id": "S-A"}`). A material
+  action is refused unless the payload hashes to the approved one, so the
+  placeholder could only ever produce a NEEDS-APPROVAL verdict and a
+  permanently disabled Execute button. The approved payload now travels
+  from the approval row to the action panel.
+- [x] **F86** The end-to-end test asserted `see(page, "ALLOW")`, which
+  was satisfied by the Action Center's *static subtitle* ("execute only
+  on ALLOW") whether or not the gate had ever passed. The verdict is now
+  asserted on the verdict element itself, and the Execute button's
+  enabled state is asserted.
+- [x] **F87** The e2e smoke tests loaded a deep link without a token, so
+  the API answered 401 and the client navigated to `/login` by design,
+  unmounting the page under test in a race with the assertion. (F80
+  covers the same class in the smoke file; this entry records the
+  re-occurrence and the fix in the full-flow file.)

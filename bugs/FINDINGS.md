@@ -1,11 +1,33 @@
 # Audit Findings — Master Index
 
-Date: 2026-09-25 · Scope: full repo (backend, frontend, engine, tests, seed, infra) · Source: 4 parallel deep audits → 232 raw findings → **160 deduplicated fix units**.
+Date: 2026-09-25 · Scope: full repo (backend, frontend, engine, tests, seed, infra) · Source: 4 parallel deep audits → 232 raw findings.
 
-**Status after the six fix waves: 148 fixed `[x]`, 12 deferred with rationale `[~]`, 0 open.**
-Deferred items (with rationale in each file): full DateTime-column migration, AI provider surface in the request path, blocking_conflicts/audit_complete gates, fixture-name alignment, tool-pin raises, coverage fail-under (measured first), S106 fixture scoping, e2e build artifacts, test_api lifecycle split, render_dry_run/log_timeline handler semantics.
+**Status after the six fix waves (2026-09-25): every item closed, none open, twelve deferred with a rationale.**
 
-Verification at close: ruff + format clean, `mypy --strict` clean, `pytest` 59 green (incl. AGENT-001…004), `tsc` + `next build` green, `vitest` green, Playwright 3/3 (smoke, 360px approval, full W1→W8).
+**Status after the completion pass (2026-10-20): 234 closed, 0 open, 0 deferred.**
+Every item that was deferred with a rationale has now been closed, each
+with a command that proves it. The pass also found and fixed defects the
+original audit did not reach — details in `docs/BUILD_LOG.md`.
+
+A note on the count, because the header used to be wrong and is now
+right: the audit described "232 raw findings → 160 deduplicated fix
+units", but the ledger it indexed actually carried **198** entries, and
+the completion pass added **36** more (C1–C19 in `01-backend.md`,
+F80–F87 in `02-frontend.md`). The ledger's own entries are the
+authoritative count: **234 closed, 0 open, 0 deferred**. "232 raw
+findings" remains the audit's own description of its input.
+
+The items that were deferred with a rationale, and are now closed: full
+DateTime-column migration (B44), AI provider surface in the request path
+(B49), blocking_conflicts and audit_complete gates (B45), fixture-name
+alignment (T15), tool-pin raises (I20), coverage fail-under (now measured
+and enforced), S106 fixture scoping (I25), e2e build artifacts, test_api
+lifecycle split (T9, B53), and the render_dry_run / log_timeline handler
+semantics (E13).
+
+Verification at close: ruff + format clean, `mypy --strict` clean, `pytest`
+162 passed + 5 skipped and no warnings (the skips are the Postgres leg, run by the weekly
+CI job), `tsc` + `next build` green, `vitest` green, Playwright green.
 
 Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / deferred with ADR.
 

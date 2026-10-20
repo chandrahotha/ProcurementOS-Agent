@@ -4,6 +4,175 @@
 > how it was checked, and what is still open. Anything that bends the brain
 > gets an ADR link, not a quiet edit.
 
+## 2026-10-20 (second wave) — Research context, INR corpus, and the plan phase made to execute
+
+- **The research context is now explicit** (ADR 0011). The reporting
+  currency is INR, the dual-control threshold is INR 5,00,000, the
+  synthetic suppliers are opaque records (`SYN-SUP-01` … `SYN-SUP-06`) with
+  a sector and location descriptor rather than a placeholder trade name,
+  and every claim the artefact makes about itself is labelled **E1**
+  (executed here), **E2** (computable, not executed here) or **E3**
+  (proposed). The engine was already currency-agnostic, so the migration
+  was a change of labels and magnitudes; the golden vectors were
+  *re-derived*, not re-scaled, and the derivation is written into the
+  vector comments. The migration is scripted
+  (`scripts/rename_synthetic_identifiers.py`) and idempotent.
+- **The plan phase now executes** (findings C15–C16, F83). Two defects
+  had stopped it dead:
+  - the task rows carried `{"depends_on": [...]}` as the tool's
+    *arguments*, so every task with a required argument blocked itself.
+    The plan skeleton now carries the canonical call shape per tool
+    (`app/plans/service.py::CANONICAL_ARGS`).
+  - with no broker reachable, an acknowledged plan left all ten tasks
+    queued for ever and the mission never moved. `worker/queue.py`
+    gained `execute_plan_tasks`, which runs the plan in the API process,
+    in dependency order, through the same `apply_task` with the same
+    policy checks and the same audit events. The acknowledge response
+    reports which transport ran it, and `POST /missions/{id}/tasks/run`
+    re-runs a plan on demand.
+- **Two client defects that made the action gate unreachable** (C19, F85).
+  The Action Center and the Advance Panel carried a hard-coded
+  `{"supplier_id": "S-A"}`; a material action is refused unless the
+  payload hashes to the approved one, so the placeholder could only
+  produce a NEEDS-APPROVAL verdict and a permanently disabled Execute
+  button. The approved payload now travels from the approval row to the
+  action panel, and the approvals read model returns it.
+- **The end-to-end test was not asserting what it claimed** (F86).
+  `see(page, "ALLOW")` was satisfied by the Action Center's *static
+  subtitle* ("execute only on ALLOW"), so the dry-run verdict was never
+  checked. The verdict is now asserted on the verdict element, the
+  Execute button's enabled state is asserted, and the sourcing table is
+  asserted by supplier rather than by a bare row count.
+- **The evaluation design and the bibliography are written**
+  (`docs/EVALUATION.md`, `docs/REFERENCES.md`). The evaluation is a
+  fixture-based counterfactual study with three arms — the engine alone,
+  the full agent, and the agent with one control disabled — and ten
+  measures, each with an oracle derived from the published conventions
+  rather than from a second call into the same code. The threats to
+  validity are stated rather than omitted; the weakest is that the
+  oracles and the implementation share an author, and the mitigation
+  (expected values written as literals with the derivation in the
+  comment) is partial.
+- **The component library the product brain specifies now exists.**
+  `web/components/data.tsx` (DataTable with sorting and expansion,
+  FilterBar, MetricRow, CoverageRing, ConfidenceBadge, Money, Deadline),
+  `web/components/intel.tsx` (CostWaterfall, RiskHeatmap,
+  NegotiationLadder, ScoreBreakdown, ScenarioCard) and
+  `web/components/panels.tsx` (StateRail, ActivityLog, Timeline,
+  DiffViewer, RuleExplanation, DryRunCard, BriefCard, ConfirmDialog,
+  ExportButton, AIAssistantPanel, UploadZone, ApprovalPanel,
+  AutonomyDial, ExceptionList). The mission shell now carries the
+  nine-state progress rail, the coverage ring and the autonomy dial; the
+  cost and risk screens are visualisations rather than flat tables.
+
+Checks: ruff + format clean, `mypy --strict` clean (88 files), `pytest`
+162 passed + 5 skipped, `tsc` + `next build` + `vitest` green, lint 0
+errors, Playwright 3/3, and the four operational drills pass.
+
+## 2026-10-20 — Completion pass: every deferred item closed, every release-gate box answerable
+
+- **The 12 deferred findings are closed.** The findings ledger moves from
+  148 fixed / 12 deferred to **160 fixed / 0 deferred / 0 open**. Each
+  closure names the command that proves it. The big ones:
+  - **B44 — real timestamp columns** (ADR 0006). `pos_mission.deadline`,
+    `pos_approval.expires_at` and `pos_transaction.ordered_at` are
+    `TIMESTAMP WITH TIME ZONE` instead of ISO strings in a `VARCHAR`.
+    A timestamp stored as text compares as text, and a `VARCHAR` cannot
+    refuse to hold a value that is not a timestamp — so `_expired` had to
+    *guess* that an unparseable expiry meant "expired". Now the database
+    refuses it, and the guess is gone. Migration `pos_005` converts with
+    a deliberate per-column policy for unparseable values.
+  - **B45 — the mission gates are real** (ADR 0007). `blocking_conflicts`
+    was hardcoded to 0 because corrections kept no history, so a second
+    correction silently overwrote the first and the three-way diff in
+    `app/evidence/conflicts.py` was wired to nothing. The evidence span
+    now carries a `base_value` and a `conflict_state`; a disagreeing
+    correction is refused with 409 and the stored value is left alone.
+    `audit_complete` re-walks the tenant's audit chain through one shared
+    implementation, so the endpoint and the gate cannot disagree.
+  - **B49 — the AI path persists what it did.** It already wrote
+    `AIJob`/`AIResult` from the brief endpoint, but the rows were written
+    **without a `tenant_id`**, so the path had never succeeded: a NOT NULL
+    violation on every call. Found by `tests/test_ai_path.py`, which
+    drives a local provider through the endpoint.
+  - **T15 — the fixtures are real.** `seed/make_fixtures.py` generates the
+    thirteen seeded documents (PDF, XLSX, and a macro-bearing OOXML) plus
+    the four test/rehearsal fixtures, deterministically — no timestamps,
+    no random ids. The seed hashes the *file* rather than the filename.
+  - **T9 / B53 — the lifecycle test is split.** It was one 250-line
+    function with `in (403, 404)` assertions that could not tell an
+    intended denial from an accidental one. It is now the phases it
+    asserts, each starting from the phase it needs, with every denial
+    pinned to an exact status, and the harness runs with
+    `raise_server_exceptions=True`.
+  - **I20 / I25 — the pins and the rules.** The tool pins admitted only
+    releases that excluded the current ones, so the code was never
+    checked against them; raising them found two real `mypy --strict`
+    errors and one formatting difference. `S106` is no longer blanket-
+    exempt for tests. `requirements.lock` pins the dependency set.
+- **CI gates every push** (ADR 0008). The pipeline ran weekly only, so a
+  regression could sit on `main` for a week. Now the cheap chain (lint,
+  typecheck, unit, security lint, dep audit, secret scan, web) runs on
+  every push and PR, and the heavy legs (Postgres migration + seed + PG
+  tests, container builds, Playwright) stay weekly and on dispatch.
+  The `integration` marker is real now: `tests/test_postgres.py` uses it.
+- **The release gate's unticked boxes are answerable.** Each was
+  "pending staging" because nothing existed to run. Now:
+  - *Env/credentials separated per environment* —
+    `deploy/env/{dev,staging,prod}.env.example` and
+    `scripts/verify_env.py`, which refuses a staging or production file
+    that still carries a development credential. `alembic.ini` no longer
+    commits a password.
+  - *Migrations staging-tested* — the chain is proven reversible on every
+    push by `tests/test_migrations.py`, and the chain itself was made
+    portable: `pos_003` used Postgres-only `DELETE ... USING`, so the
+    "round-trip verified on scratch sqlite" claim was never true.
+  - *Backups + restore test* — `scripts/backup.py backup|verify|restore`
+    writes a dump plus a manifest, checksums it, restores it and compares
+    the row counts table by table.
+  - *Rollback rehearsed* — `scripts/rollback.py` runs upgrade → downgrade
+    -1 → upgrade against a scratch database and measures it: **5.96 s**
+    against a 30-minute RTO budget.
+  - *SSRF suite against live webhook hosts* — `scripts/ssrf_drill.py`
+    starts a real HTTP server and proves the delivery reaches it, that a
+    host outside the allowlist is refused, that a non-http scheme is
+    refused, and that a 302 is not followed. ADR 0009.
+  - *Monitoring + queue/task-age alerts* — there was **no observability
+    at all** while the gate claimed "OpenTelemetry wiring exists". Now
+    `app/core/observe.py` collects request metrics, counters and queue
+    age, `/api/v1/ops/metrics` serves Prometheus text, and
+    `scripts/task_age.py` is the alert. ADR 0010.
+- **Defects the original audit did not reach** (C1–C14 in `bugs/`, F80–F82
+  in `bugs/02-frontend.md`): the AI result row without a tenant; an
+  uncited AI claim rendered as a certified evidence note; a rate limiter
+  that counted by address alone, so behind a proxy one noisy user
+  throttled the whole tenant; a Redis connect timeout of "wait forever"
+  that turned one acknowledgement into a ten-task hang; the credential
+  login path, which had never run because the session expiry compared an
+  aware timestamp against a naive one; and the smoke test, which raced a
+  redirect it could not observe and flaked roughly one run in three while
+  being reported as green.
+- **Tests: 59 → 157 passed** (5 skipped: the Postgres leg, run by the
+  weekly job). Coverage 65% → 68.4% against a floor the suite actually
+  meets. The suite is now order-independent: the AI circuit breaker and
+  the rate-limit counters are process-wide by design and are reset around
+  every test.
+- **Frontend: 27 → 10 lint warnings**, the remaining ten being the one
+  rule the eslint config downgrades on purpose, with the reason written
+  down there. The claimed-but-absent F16 stale-response guard is now
+  real on the four mission screens that fetch in an effect.
+
+Checks: ruff + format clean, `mypy --strict` clean (88 files), `pytest`
+162 passed + 5 skipped, `tsc` + `next build` + `vitest` green, lint 0
+errors, Playwright 3/3 (five consecutive runs), and the four operational
+drills run and recorded above.
+
+Still open, honestly: a real IdP has never been run against a live
+issuer; the Postgres leg is written and collected but was not executed
+locally, because the PostgreSQL installation on this machine aborts its
+background workers and takes the cluster down; and the drills have not
+been run against a deployed environment, because there is not one.
+
 ## 2026-09-26 — 55→85 wave: real external actions, real auth, real AI touchpoint, staging rehearsal
 
 - **Real external actions (the 'action' claim becomes real):** new
@@ -136,7 +305,7 @@ A buyer could have declared `value_minor: 1` to dodge the Finance lane.
   when dependabot rescans after this push; stragglers get dismissed with
   evidence.
 
-Checks: ruff + format clean, `mypy --strict` clean, `pytest` 42 green
+Checks: ruff + format clean, `mypy --strict` clean, `pytest` 59 green
 (AGENT-002 strengthened), `tsc` + `next build` + `vitest` + Playwright 3/3
 with the updated full-flow. Remaining audit findings (evidence links,
 document bytes, real extractor, KPIs from ledger, chain verify, CONC-01,
