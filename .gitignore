@@ -47,6 +47,9 @@ pos_demo.db
 pos_demo_api.log
 pos_demo_web.log
 pos_dev.db
+# Local agent-tooling state, not product content
+.kilo/
+.sdlc/
 # Scratch DBs from local seed/E2E runs
 *.db
 *.sqlite3
