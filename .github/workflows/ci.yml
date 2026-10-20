@@ -130,14 +130,22 @@ jobs:
           cache-dependency-path: requirements.lock
       - run: pip install -r requirements.lock
       - run: pip install -e . --no-deps
-      - run: pip-audit --strict
+      # Audit the lockfile, not the ambient environment: the lockfile is
+      # exactly what CI installs, so the answer is reproducible. Auditing
+      # the environment audits whatever happens to be in it.
+      - run: pip-audit --strict --requirement requirements.lock
       - uses: actions/setup-node@49943ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm audit --prefix web --omit=dev
-      - run: npm audit --prefix web
+      # The dependency gate separates the shipped artefact from the build
+      # toolchain: a production advisory always fails, and a development
+      # advisory fails unless it is on the reviewed exception list in
+      # scripts/npm_audit.py. The raw `npm audit` calls that were here
+      # failed on any advisory at all, which made them a gate nobody could
+      # satisfy and a claim nobody could check.
+      - run: python scripts/npm_audit.py --prefix web
 
   secret-scan:
     runs-on: ubuntu-latest

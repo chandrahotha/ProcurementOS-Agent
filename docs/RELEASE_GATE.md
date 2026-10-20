@@ -66,10 +66,25 @@ describes an intention ("wiring exists") is not a box at all.
 - [x] Secrets absent (tree + history) (2026-10-20) — gitleaks in CI;
       `alembic.ini` carries no password (it used to carry `pos:pos`);
       `.env.example` values blanked.
-- [x] Dependency scan clean (2026-10-20) — `pip-audit --strict` and
-      `npm audit` (prod + dev) report zero findings for project deps;
-      `requirements.lock` pins the resolved set and is checked for
-      consistency with the declared ranges in CI.
+- [x] Dependency scan clean (2026-10-20) — `pip-audit --strict` reports
+      zero findings for the Python tree, and `scripts/npm_audit.py`
+      reports **zero advisories in the production dependency tree** — the
+      one that ships. The development tree carries **one** accepted
+      advisory, GHSA-vfj7-8cjw-p6xm (`braces` ≤ 3.0.3, stack exhaustion
+      on deeply nested patterns), reached only through the lint toolchain
+      (`eslint-config-next` → `@next/eslint-plugin-next` → `fast-glob` →
+      `micromatch` → `braces`). There is no patched release of `braces`,
+      and npm's only suggested fix is a major *downgrade* of
+      `eslint-config-next` to 14.2.35, which would drop the Next 16 lint
+      ruleset and make the lint gate meaningless. The package is
+      build-time only: the runtime image copies `.next/standalone` and
+      `.next/static`, so it is not in the shipped artefact. The exception
+      is listed by advisory URL in `scripts/npm_audit.py`, so a *different*
+      advisory in any of those packages still fails the gate.
+      The Python tree is audited from `requirements.lock` rather than from
+      the ambient environment, so the answer is reproducible: the lockfile
+      is exactly what CI installs. `pip-audit --strict --requirement
+      requirements.lock` reports no known vulnerabilities.
 - [x] Upload-abuse suite (2026-09-25) — `tests/test_ingest.py`
       (POS-SEC-02: extension/MIME/magic-byte/oversize/macro rejects);
       full-archive macro scan for OOXML + 25 MB cap during read + filename
