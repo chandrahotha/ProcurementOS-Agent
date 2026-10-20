@@ -1,5 +1,9 @@
-﻿// P11 Negotiation Studio, wired: ladders + drafts, zero sends. Bound
-// violations are refused by the API (walk-away is a hard wall).
+﻿// P11 Negotiation Studio: the ladder (opening / target / walk-away) drawn as
+// a track, a draft editor, and a bound-violation error. Nothing is sent
+// here: the walk-away is a hard wall enforced by the API, and sending
+// needs an EXTERNAL_COMM approval quorum.
+//
+// The ladder values are minor units (paise) of the mission currency.
 "use client";
 
 import { use, useState } from "react";
@@ -8,29 +12,35 @@ import { AdvancePanel } from "@/components/AdvancePanel";
 import { api } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
 import { Card, EmptyState, Field, StateBadge } from "@/components/ui";
+import { NegotiationLadder } from "@/components/intel";
 
-type Ladder = { opening: number; target: number; walk_away: number;
-  concessions: number[] };
+type Ladder = { opening: number; target: number; walk_away: number; concessions: number[] };
 
 export default function NegotiationPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
-  const [candidate, setCandidate] = useState("9000");
-  const [batna, setBatna] = useState("10000");
-  const [price, setPrice] = useState("9500");
-  const [text, setText] = useState("Hi, can you do 9500?");
+  const [candidate, setCandidate] = useState("151220");
+  const [batna, setBatna] = useState("168000");
+  const [price, setPrice] = useState("149000");
+  const [text, setText] = useState(
+    "We can hold INR 1,240.00 per piece for 1000 pieces if the order lands this quarter.",
+  );
   const [ladder, setLadder] = useState<Ladder | null>(null);
   const [note, setNote] = useState("");
 
   async function draft() {
     setNote("");
     try {
-      const out = await api.draft(id, {
-        supplier_id: "S-A",
-        candidate_cost_minor: Number(candidate),
-        batna_cost_minor: Number(batna),
-        draft_price_minor: Number(price),
-        text,
-      }, readToken());
+      const out = await api.draft(
+        id,
+        {
+          supplier_id: "SYN-SUP-01",
+          candidate_cost_minor: Number(candidate),
+          batna_cost_minor: Number(batna),
+          draft_price_minor: Number(price),
+          text,
+        },
+        readToken(),
+      );
       setLadder(out.ladder);
       setNote("Draft stored. Sending needs EXTERNAL_COMM approval — never from here.");
     } catch (e) {
@@ -64,20 +74,42 @@ export default function NegotiationPage(props: { params: Promise<{ id: string }>
         </div>
       </Card>
       {ladder ? (
-        <div className="table-card">
-          <table>
-            <caption className="sr-only">Negotiation ladder</caption>
-            <thead><tr><th scope="col">Opening</th><th scope="col">Target</th><th scope="col">Walk-away</th><th scope="col">Concessions</th></tr></thead>
-            <tbody>
-              <tr>
-                <td data-label="Opening" className="mono">{ladder.opening}</td>
-                <td data-label="Target" className="mono">{ladder.target}</td>
-                <td data-label="Walk-away" className="mono">{ladder.walk_away}</td>
-                <td data-label="Concessions" className="mono">{ladder.concessions.join(" → ")}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <Card className="grid gap-3">
+          <h2 className="card-title">Concession ladder</h2>
+          <NegotiationLadder
+            ladder={ladder}
+            draftPrice={Number(price)}
+            candidateCost={Number(candidate)}
+            batnaCost={Number(batna)}
+          />
+          <div className="table-card">
+            <table>
+              <caption className="sr-only">Negotiation ladder rungs</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Opening</th>
+                  <th scope="col">Target</th>
+                  <th scope="col">Walk-away</th>
+                  <th scope="col">Rungs</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td data-label="Opening" className="mono">{ladder.opening}</td>
+                  <td data-label="Target" className="mono">{ladder.target}</td>
+                  <td data-label="Walk-away" className="mono">{ladder.walk_away}</td>
+                  <td data-label="Rungs" className="mono">
+                    {ladder.concessions.join(" → ")}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-text-2">
+            Walk-away is the hard wall: a draft above it is refused by the API, and
+            the rungs land on the target without overshooting it.
+          </p>
+        </Card>
       ) : (
         <EmptyState icon="chart" title="No ladder yet"
           body="Draft inside the ladder — the opening, target, and walk-away compute from the candidate and BATNA costs." />

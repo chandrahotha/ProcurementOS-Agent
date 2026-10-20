@@ -12,6 +12,13 @@ import { Card, EmptyState, Field, StateBadge } from "@/components/ui";
 type Scenario = { scenario_id: string; allocations: unknown[];
   objective_value: number; candidate: boolean; savings_vs_baseline: number };
 
+/** The scenarios for a mission. Module level so the effect and the
+ *  reload-after-create path share one implementation. */
+async function fetchScenarios(id: string): Promise<Scenario[]> {
+  const d = await api.scenariosList(id, readToken());
+  return d.scenarios;
+}
+
 export default function ScenariosPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
   const [rows, setRows] = useState<Scenario[]>([]);
@@ -22,13 +29,27 @@ export default function ScenariosPage(props: { params: Promise<{ id: string }> }
 
   async function load() {
     try {
-      const d = await api.scenariosList(id, readToken());
-      setRows(d.scenarios);
-      setState(d.scenarios.length ? "success" : "empty");
+      const list = await fetchScenarios(id);
+      setRows(list);
+      setState(list.length ? "success" : "empty");
     } catch (e) { setState(stateForError(e)); }
   }
 
-  useEffect(() => { void load(); /* eslint-disable-next-line */ }, [id]);
+  // The fetch lives inside the effect so the effect has no dependency it
+  // cannot satisfy, and so a response that arrives after the screen has
+  // moved on cannot overwrite the newer screen's data (F16).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await fetchScenarios(id);
+        if (cancelled) return;
+        setRows(list);
+        setState(list.length ? "success" : "empty");
+      } catch (e) { if (!cancelled) setState(stateForError(e)); }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
 
   const offers = [
     { supplier_id: "S-A", unit_cost_minor: 50, capacity: 60 },

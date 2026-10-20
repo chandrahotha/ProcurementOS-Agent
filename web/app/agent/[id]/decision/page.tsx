@@ -5,7 +5,7 @@
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { Screen } from "@/components/Screen";
-import { api, stateForError } from "@/lib/api-client";
+import { api, ApiError, stateForError } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
 import { Card, EmptyState, StateBadge } from "@/components/ui";
 
@@ -13,7 +13,9 @@ type Brief = { winner_supplier_id: string | null; winner_tco_minor: number | nul
   ranking: { supplier_id: string; tco_minor: number }[];
   candidate_scenarios: string[];
   exceptions: { stale_fx_suppliers: string[]; lines_ranked: number };
-  evidence_note: string; cited_lines: string[] };
+  evidence_note: string; cited_lines: string[];
+  ai_draft?: { text: string; cited: boolean; verdict: string; note: string };
+  ai: { ran: boolean; status: string; verdict: string; cited: boolean } };
 
 export default function DecisionPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
@@ -22,16 +24,30 @@ export default function DecisionPage(props: { params: Promise<{ id: string }> })
   const [state, setState] = useState<"loading" | "empty" | "success" | "error" | "denied">("loading");
 
   useEffect(() => {
-    api.brief(id, readToken())
-      .then((b) => { setBrief(b); setState("success"); })
-      .catch((e) => setState(stateForError(e)));
+    let cancelled = false;
+    void (async () => {
+      try {
+        const b = await api.brief(id, readToken());
+        if (!cancelled) {
+          setBrief(b);
+          setState("success");
+        }
+      } catch (e) {
+        if (cancelled) return;
+        // "brief_empty" is not a failure: the mission has no certified
+        // results yet, which is a state with a next step, not an error.
+        const code = e instanceof ApiError ? e.code : "";
+        setState(code === "brief_empty" ? "empty" : stateForError(e));
+      }
+    })();
+    return () => { cancelled = true; };
   }, [id]);
 
   async function requestApprovals() {
     setNote("");
     // Minimal hash-locked payload: the server computes the award value from
     // certified results and picks the lanes (brain 04 §2).
-    const payload = { supplier_id: brief?.winner_supplier_id ?? "S-A" };
+    const payload = { supplier_id: brief?.winner_supplier_id ?? "" };
     try {
       const out = await api.requestApprovals(id, {
         action_class: "AWARD", payload,
@@ -85,6 +101,17 @@ export default function DecisionPage(props: { params: Promise<{ id: string }> })
             </ul>
             <p className="mono mt-3 text-xs text-text-2">{brief.evidence_note}</p>
           </Card>
+          {brief.ai_draft ? (
+            <Card>
+              <h2 className="card-title mb-2 row gap-2">
+                AI analysis <StateBadge state="stale" />
+              </h2>
+              <p className="text-sm">{brief.ai_draft.text}</p>
+              <p className="mono mt-2 text-xs text-text-2">
+                {brief.ai_draft.note} (scan: {brief.ai_draft.verdict})
+              </p>
+            </Card>
+          ) : null}
           <div className="row">
             <button type="button" className="primary" onClick={() => void requestApprovals()}>
               Request approvals

@@ -46,6 +46,8 @@ const STATE_TONE: Record<string, Tone> = {
   expired: "neutral",
   clean: "ok",
   quarantined: "warn",
+  // An uncited AI draft: shown, but never dressed as a certified fact.
+  stale: "warn",
   acknowledged: "ok",
   draft: "neutral",
   superseded: "neutral",

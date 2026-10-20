@@ -2,14 +2,13 @@
 // idempotent receipts ledger, settle, then the advance to report.
 "use client";
 
-import { useState, use } from "react";
+import { useEffect, useState, use } from "react";
 import { Screen } from "@/components/Screen";
 import { AdvancePanel } from "@/components/AdvancePanel";
 import { api, stateForError, verdictTone } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
 import { Badge, Card, Field, StateBadge } from "@/components/ui";
 
-type Receipt = Record<string, unknown>;
 type External = {
   purchase_orders: { id: string; po_number: string; supplier_id: string; status: string; total_minor: number; at: string }[];
   reservations: { id: string; mission_id: string; status: string; amount_minor: number; currency: string; at: string }[];
@@ -31,7 +30,11 @@ export default function ActionsPage(props: { params: Promise<{ id: string }> }) 
   const params = use(props.params);
   const mid = params.id;
   const [actionClass, setActionClass] = useState("AWARD");
-  const [payload, setPayload] = useState('{"supplier_id": "S-A"}');
+  // The payload is never invented here. A material action is refused
+  // unless the payload hashes to the approved one, so a placeholder here
+  // would only ever produce a NEEDS-APPROVAL verdict and a dead button.
+  // It comes from the approval the quorum was granted on.
+  const [payload, setPayload] = useState("{}");
   const [tool, setTool] = useState("issue_po_intent");
   const [verdict, setVerdict] = useState("");
   const [policy, setPolicy] = useState("");
@@ -57,6 +60,25 @@ export default function ActionsPage(props: { params: Promise<{ id: string }> }) 
       messages: mine(msg?.messages),
     });
   }
+
+  // Pre-fill the action from the approval that was granted, so the hash the
+  // server checks is the hash it approved. Loaded once on mount.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await api.approvalsList(mid, readToken());
+        if (cancelled) return;
+        const approved = (rows.approvals ?? []).find((a) => a.status === "approved");
+        if (!approved) return;
+        setActionClass(approved.action_class);
+        setPayload(JSON.stringify(approved.payload ?? {}));
+      } catch {
+        /* no approval yet: the operator picks the action */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [mid]);
 
   // Stale-gate reset (F11): any change to what is being dry-run clears the
   // verdict, so Execute stays disabled until the NEW payload validates.

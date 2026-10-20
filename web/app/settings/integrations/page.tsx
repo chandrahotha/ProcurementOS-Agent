@@ -3,7 +3,7 @@
 "use client";
 
 import { Screen } from "@/components/Screen";
-import { Card, StateBadge } from "@/components/ui";
+import { StateBadge } from "@/components/ui";
 import { Icon } from "@/components/icons";
 
 const INTEGRATIONS = [

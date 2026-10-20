@@ -6,7 +6,7 @@ import { Screen } from "@/components/Screen";
 import { AdvancePanel } from "@/components/AdvancePanel";
 import { api } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
-import { EmptyState, Field, StateBadge } from "@/components/ui";
+import { EmptyState, StateBadge } from "@/components/ui";
 
 type Spec = { key: string; title: string; tool: string; depends_on: string[];
   estimate_min: number; autonomy_class: string };

@@ -9,25 +9,38 @@ import { api, stateForError } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
 import { EmptyState, StateBadge } from "@/components/ui";
 
+// The demo analysis payload mirrors the seeded synthetic corpus: three
+// domestic INR quotes and one imported USD quote, so the FX path and the
+// cross-currency ranking are both exercised. Amounts are in minor units
+// (paise) of the invoice currency.
+//
+// The risk dimensions are RISK scores, not quality scores: the engine maps
+// a high weighted composite to a worse band, so a low score is a good
+// supplier. These values match the seeded corpus and the demo mission.
 const DEMO_PAYLOAD = {
   modules: ["sourcing", "supplier", "cost", "risk"],
-  target_currency: "EUR", base_uom: "pcs",
+  target_currency: "INR", base_uom: "pcs",
   quote_lines: [
-    { line_id: "L1", supplier_id: "S-A", qty: "48", uom: "pcs",
-      unit_price_minor: 90, currency: "EUR", tax_mode: "inclusive" },
-    { line_id: "L1", supplier_id: "S-B", qty: "2", uom: "box",
-      unit_price_minor: 1000, currency: "USD", tax_mode: "exclusive",
-      tax_rate: "0.19",
-      fx: { pair: "USD/EUR", rate: "0.92", source: "ECB",
+    { line_id: "L1", supplier_id: "SYN-SUP-01", qty: "100", uom: "pcs",
+      unit_price_minor: 124000, currency: "INR", tax_mode: "exclusive",
+      tax_rate: "0.18" },
+    { line_id: "L1", supplier_id: "SYN-SUP-02", qty: "100", uom: "pcs",
+      unit_price_minor: 129500, currency: "INR", tax_mode: "exclusive",
+      tax_rate: "0.18" },
+    { line_id: "L1", supplier_id: "SYN-SUP-06", qty: "80", uom: "pcs",
+      unit_price_minor: 1180, currency: "USD", tax_mode: "exclusive",
+      tax_rate: "0.18",
+      fx: { pair: "USD/INR", rate: "83.5", source: "RBI",
         quoted_at: "2026-09-01T00:00:00Z" } },
   ],
   transactions: [{ on_time: true, accepted: true, qty: 100, defects: 1 }],
   tco_items: [
-    { supplier_id: "S-A", price_minor: 4320, freight_minor: 200,
-      tax_minor: 300, discount_minor: 100 },
+    { supplier_id: "SYN-SUP-01", price_minor: 124000, freight_minor: 4500,
+      insurance_minor: 900, tooling_minor: 2500, tax_minor: 22320,
+      discount_minor: 3000 },
   ],
-  risk: { suppliers: { "S-A": { quality: 10, delivery: 10, financial: 10,
-    compliance: 10, geo: 10 } } },
+  risk: { suppliers: { "SYN-SUP-01": { quality: 10, delivery: 8,
+    financial: 9, compliance: 10, geo: 7 } } },
 };
 
 export default function SuppliersPage(props: { params: Promise<{ id: string }> }) {

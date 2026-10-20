@@ -87,7 +87,7 @@ export default function CreateMission() {
             <div className="row">
               <Field label="Currency">
                 <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-                  <option>EUR</option><option>USD</option><option>PLN</option>
+                  <option>INR</option><option>USD</option><option>EUR</option>
                 </select>
               </Field>
               <Field label="Budget cap">

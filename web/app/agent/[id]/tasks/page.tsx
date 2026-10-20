@@ -12,6 +12,13 @@ type Task = { key: string; title: string; tool: string; status: string;
 
 const COLUMNS = ["queued", "running", "needs_review", "blocked", "done"];
 
+/** The task board for a mission. Module level so the effect and the
+ *  reload-after-retry path share one implementation. */
+async function fetchTasks(id: string): Promise<Task[]> {
+  const d = await api.tasks(id, readToken());
+  return d.tasks;
+}
+
 export default function TasksPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -20,13 +27,27 @@ export default function TasksPage(props: { params: Promise<{ id: string }> }) {
 
   async function load() {
     try {
-      const d = await api.tasks(id, readToken());
-      setTasks(d.tasks);
-      setState(d.tasks.length ? "success" : "empty");
+      const list = await fetchTasks(id);
+      setTasks(list);
+      setState(list.length ? "success" : "empty");
     } catch { setState("empty"); }
   }
 
-  useEffect(() => { void load(); /* eslint-disable-next-line */ }, [id]);
+  // The fetch lives inside the effect so the effect has no dependency it
+  // cannot satisfy, and so a response that arrives after the screen has
+  // moved on cannot overwrite the newer screen's data (F16).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await fetchTasks(id);
+        if (cancelled) return;
+        setTasks(list);
+        setState(list.length ? "success" : "empty");
+      } catch { if (!cancelled) setState("empty"); }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
 
   async function retry(key: string) {
     try {

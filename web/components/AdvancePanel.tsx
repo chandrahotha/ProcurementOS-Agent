@@ -1,27 +1,36 @@
 // AdvancePanel: state advance with gate feedback. For approval->action the
 // server re-verifies quorum + payload hash, so that step carries the action
-// class and exact payload JSON (never trust the client for value math).
+// class and the exact payload JSON (never trust the client for value math).
 // Busy state guards double-submit; JSON.parse is inside the try (F8/F14).
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type Mission } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
 
 export function AdvancePanel({
-  missionId, toState, label, withPayload = false, onAdvanced,
+  missionId, toState, label, withPayload = false, onAdvanced, initialPayload,
 }: {
   missionId: string;
   toState: string;
   label: string;
   withPayload?: boolean;
   onAdvanced?: (m: Mission) => void;
+  /** The hash-locked payload to carry, when the gate expects one. */
+  initialPayload?: string;
 }) {
   const [cls, setCls] = useState("AWARD");
-  const [payload, setPayload] = useState('{"supplier_id": "S-A"}');
+  // The payload is never invented here: a material advance is refused unless
+  // the payload hashes to the approved one, so a placeholder would only
+  // produce an opaque refusal. The caller supplies what was approved.
+  const [payload, setPayload] = useState(initialPayload ?? "{}");
   const [note, setNote] = useState("");
   const [missing, setMissing] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (initialPayload != null) setPayload(initialPayload);
+  }, [initialPayload]);
 
   async function go() {
     if (busy) return;

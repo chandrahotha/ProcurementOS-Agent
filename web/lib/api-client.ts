@@ -171,6 +171,9 @@ export const api = {
     candidate_scenarios: string[];
     exceptions: { stale_fx_suppliers: string[]; lines_ranked: number };
     evidence_note: string; cited_lines: string[];
+    /** Present when the provider produced text that carries no evidence ref. */
+    ai_draft?: { text: string; cited: boolean; verdict: string; note: string };
+    ai: { ran: boolean; status: string; verdict: string; cited: boolean };
   }>(`/missions/${id}/brief`, t),
   requestApprovals: (id: string, b: Record<string, unknown>, t?: string) =>
     post<{ approvals: { id: string; lane: string; status: string }[] }>(
@@ -195,7 +198,7 @@ export const api = {
     get<{ scenarios: { scenario_id: string; allocations: unknown[]; objective_value: number; candidate: boolean; savings_vs_baseline: number }[] }>(
       `/missions/${id}/scenarios`, t),
   approvalsList: (id: string, t?: string) =>
-    get<{ approvals: { id: string; lane: string; status: string; action_class: string; expires_at: string | null; payload_hash: string }[] }>(
+    get<{ approvals: { id: string; lane: string; status: string; action_class: string; expires_at: string | null; payload_hash: string; payload: Record<string, unknown> }[] }>(
       `/missions/${id}/approvals`, t),
   retryTask: (id: string, key: string, t?: string, ik?: string) =>
     post(`/missions/${id}/tasks/${key}/retry`, {}, t, ik),

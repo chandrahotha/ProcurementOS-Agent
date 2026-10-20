@@ -11,7 +11,14 @@ import { readToken } from "@/lib/token";
 import { EmptyState, Field, StateBadge } from "@/components/ui";
 
 type Row = { id: string; lane: string; status: string; action_class: string;
-  expires_at: string | null; payload_hash: string };
+  expires_at: string | null; payload_hash: string; payload: Record<string, unknown> };
+
+/** The approval rows for a mission. Module level so the effect and the
+ *  reload-after-decision path share one implementation. */
+async function fetchApprovals(id: string): Promise<Row[]> {
+  const d = await api.approvalsList(id, readToken());
+  return (d.approvals ?? []).map((a) => ({ ...a, payload: a.payload ?? {} }));
+}
 
 export default function ApprovalPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
@@ -23,13 +30,27 @@ export default function ApprovalPage(props: { params: Promise<{ id: string }> })
 
   async function load() {
     try {
-      const d = await api.approvalsList(id, readToken());
-      setRows(d.approvals);
-      if (d.approvals.length === 0) setNote("No approvals yet — request them from the Decision Brief.");
+      const list = await fetchApprovals(id);
+      setRows(list);
+      if (list.length === 0) setNote("No approvals yet — request them from the Decision Brief.");
     } catch { setDenied(true); }
   }
 
-  useEffect(() => { void load(); /* eslint-disable-next-line */ }, [id]);
+  // The fetch lives inside the effect so the effect has no dependency it
+  // cannot satisfy, and so a response that arrives after the screen has
+  // moved on cannot overwrite the newer screen's data (F16).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await fetchApprovals(id);
+        if (cancelled) return;
+        setRows(list);
+        if (list.length === 0) setNote("No approvals yet — request them from the Decision Brief.");
+      } catch { if (!cancelled) setDenied(true); }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
 
   async function decide(aid: string, decision: "approved" | "rejected") {
     if (busy) return;
@@ -53,6 +74,12 @@ export default function ApprovalPage(props: { params: Promise<{ id: string }> })
   const pending = rows.filter((r) => r.status === "pending");
   const approved = rows.filter((r) => r.status === "approved");
   const quorum = rows.length > 0 && pending.length === 0 && approved.length > 0;
+  // The action advance is hash-locked: it must carry the payload that was
+  // approved, byte for byte. It comes from the approval row, not from a
+  // value the operator retypes.
+  const approvedPayload = approved.length
+    ? JSON.stringify(approved[0]?.payload ?? {})
+    : undefined;
 
   return (
     <Screen code="P13" title="Human Approval" breadcrumb={[{ label: "Mission Control", href: "/agent" }, { label: "Approval" }]}
@@ -98,7 +125,8 @@ export default function ApprovalPage(props: { params: Promise<{ id: string }> })
       )}
       {quorum ? (
         <AdvancePanel missionId={id} toState="action"
-          label="Advance to action (quorum verified)" withPayload />
+          label="Advance to action (quorum verified)" withPayload
+          initialPayload={approvedPayload} />
       ) : (
         <p className="text-xs text-text-2">Advance to action unlocks when every lane has approved and the
           payload hash still matches.</p>

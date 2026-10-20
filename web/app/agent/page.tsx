@@ -20,26 +20,28 @@ export default function MissionControl() {
     setToken(readToken());
   }, []);
 
-  async function load(t: string) {
-    if (!t) {
+  useEffect(() => {
+    if (!token) {
       setState("empty");
       return;
     }
-    setState("loading");
-    try {
-      const data = await api.missions(t);
-      setMissions(data.missions);
-      setState(data.missions.length ? "success" : "empty");
-    } catch (e) {
-      setState(stateForError(e));
-      setErr(e instanceof ApiError ? e.message : "load failed");
-    }
-  }
-
-  useEffect(() => {
-    if (token) void load(token);
-    else setState("empty");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // The fetch lives inside the effect so the effect has no dependency it
+    // cannot satisfy, and so a response that arrives after the token has
+    // changed cannot overwrite the newer screen's data (F16).
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await api.missions(token);
+        if (cancelled) return;
+        setMissions(data.missions);
+        setState(data.missions.length ? "success" : "empty");
+      } catch (e) {
+        if (cancelled) return;
+        setState(stateForError(e));
+        setErr(e instanceof ApiError ? e.message : "load failed");
+      }
+    })();
+    return () => { cancelled = true; };
   }, [token]);
 
   function connect(t: string) {

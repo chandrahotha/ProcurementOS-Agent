@@ -10,20 +10,40 @@ import { readToken } from "@/lib/token";
 import { EmptyState, StateBadge } from "@/components/ui";
 import { Icon } from "@/components/icons";
 
+type Doc = { id: string; filename: string; status: string };
+
+/** The document queue for a mission. Module level so the effect and the
+ *  reload-after-upload path share one implementation. */
+async function fetchDocuments(id: string): Promise<Doc[]> {
+  const d = await api.documents(id, readToken());
+  return d.documents;
+}
+
 export default function IntakePage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
-  const [docs, setDocs] = useState<{ id: string; filename: string; status: string }[]>([]);
+  const [docs, setDocs] = useState<Doc[]>([]);
   const [note, setNote] = useState("");
   const [verdict, setVerdict] = useState("");
 
   async function load() {
     try {
-      const d = await api.documents(id, readToken());
-      setDocs(d.documents);
+      setDocs(await fetchDocuments(id));
     } catch { /* denied or empty render below */ }
   }
 
-  useEffect(() => { void load(); /* eslint-disable-next-line */ }, [id]);
+  // The fetch lives inside the effect so the effect has no dependency it
+  // cannot satisfy, and so a response that arrives after the screen has
+  // moved on cannot overwrite the newer screen's data (F16).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const docs = await fetchDocuments(id);
+        if (!cancelled) setDocs(docs);
+      } catch { /* denied or empty render below */ }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
 
   async function upload(file: File) {
     setNote(`Uploading ${file.name}…`);

@@ -24,6 +24,21 @@ async function see(page: Page, text: string) {
   ).toBeVisible({ timeout: 15_000 });
 }
 
+/**
+ * The dry-run verdict, asserted on the verdict element itself.
+ *
+ * `see(page, "ALLOW")` is not enough: the Action Center's static subtitle
+ * reads "execute only on ALLOW", and that is also a `role="status"`
+ * element, so a substring match on "ALLOW" was satisfied by the subtitle
+ * whether or not the gate had ever passed. The verdict element carries
+ * `data-tone`, and its badge holds the verdict word on its own.
+ */
+async function verdictIs(page: Page, expected: string) {
+  await expect(
+    page.locator('p[role="status"][data-tone]').getByText(expected, { exact: true }),
+  ).toBeVisible({ timeout: 15_000 });
+}
+
 test("W1-W8: intake through report", async ({ page }) => {
   test.setTimeout(120_000);
   // W1: connect + create mission (P01 -> P02 -> P03).
@@ -38,7 +53,7 @@ test("W1-W8: intake through report", async ({ page }) => {
   // W2: upload + quarantine verdict + plan + advance to plan.
   await page.setInputFiles(
     "input[type=file]",
-    "../seed/fixtures/QUOTE-ACME-001.pdf",
+    "../seed/fixtures/QUOTE-SYN-SUP-01-001.pdf",
   );
   await see(page, "clean");
   await page.locator(".row").getByRole("button", { name: "Generate plan" }).click();
@@ -62,11 +77,19 @@ test("W1-W8: intake through report", async ({ page }) => {
   await page.getByRole("button", { name: "Advance to analysis" }).click();
   await see(page, "Advanced to analysis.");
 
-  // W3: native analysis suite + rankings (P07).
+  // W3: native analysis suite + rankings (P07). The demo payload carries
+  // three domestic INR quotes and one imported USD quote, so the certified
+  // ranking has four lines — three of them the domestic quotes plus the
+  // converted import. Asserting the suppliers, not a bare row count, says
+  // what the table is supposed to contain.
   await page.goto(`/agent/${missionId}/suppliers`);
   await page.getByRole("button", { name: "Run native analysis suite" }).click();
   await see(page, "complete");
-  await expect(page.locator("table tbody tr")).toHaveCount(2);
+  const ranked = page.locator("table tbody tr");
+  await expect(ranked).toHaveCount(3);
+  for (const supplier of ["SYN-SUP-01", "SYN-SUP-02", "SYN-SUP-06"]) {
+    await expect(ranked.filter({ hasText: supplier })).toHaveCount(1);
+  }
   await page.getByRole("button", { name: "Advance to scenarios" }).click();
   await see(page, "Advanced to scenarios.");
 
@@ -106,8 +129,18 @@ test("W1-W8: intake through report", async ({ page }) => {
   // W7: dry-run first, execute on ALLOW, settle (P14).
   await connect(page, BUYER);
   await page.goto(`/agent/${missionId}/actions`);
+  // The action panel carries the approved payload, so the dry-run's hash
+  // check can succeed. Assert it is present before the dry-run, so a
+  // failure says "the approved payload never arrived" rather than
+  // "NEEDS-APPROVAL".
+  await expect(
+    page.getByLabel("Payload (must hash-match the approval)"),
+  ).toHaveValue(/supplier_id/);
   await page.locator(".row").getByRole("button", { name: "Dry-run" }).click();
-  await see(page, "ALLOW");
+  await verdictIs(page, "ALLOW");
+  await expect(
+    page.locator(".row").getByRole("button", { name: "Execute", exact: true }),
+  ).toBeEnabled();
   await page.locator(".row").getByRole("button", { name: "Execute", exact: true }).click();
   await see(page, "Executed.");
   await page.locator(".row").getByRole("button", { name: "Mark actions settled" }).click();

@@ -1,15 +1,20 @@
 // Mission-scoped shell (F44): mission title + state + a tab bar linking the
 // 14 mission screens, so no screen is reachable only by typing its URL.
 // Keeps main[data-screen] codes on every child intact.
+//
+// The header also carries the 9-state progress rail, the coverage ring and
+// the autonomy dial the brain asks for (06 §2 "Mission context header"), so
+// "where is this mission" is answerable at a glance on every screen.
 "use client";
 
 import { useEffect, useState } from "react";
 import { use } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { api, stateForError, type Mission } from "@/lib/api-client";
+import { api, type Mission } from "@/lib/api-client";
 import { readToken } from "@/lib/token";
 import { StateBadge } from "@/components/ui";
+import { StateRail } from "@/components/panels";
 
 const SCREENS = [
   { seg: "", label: "Overview" },
@@ -41,9 +46,16 @@ export default function MissionLayout({
   const [mission, setMission] = useState<Mission | null>(null);
 
   useEffect(() => {
-    api.mission(id, readToken())
-      .then(setMission)
-      .catch(() => setMission(null));
+    let cancelled = false;
+    void (async () => {
+      try {
+        const m = await api.mission(id, readToken());
+        if (!cancelled) setMission(m);
+      } catch {
+        if (!cancelled) setMission(null);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [id]);
 
   const currentSeg = pathname.replace(`/agent/${id}`, "").replace(/^\//, "");
@@ -70,6 +82,13 @@ export default function MissionLayout({
         </div>
         <span className="mono text-xs text-text-2">{id.slice(0, 8)}</span>
       </div>
+      {mission ? (
+        <StateRail
+          current={mission.state}
+          coverage={mission.coverage_pct}
+          dial={mission.autonomy_level}
+        />
+      ) : null}
       <nav aria-label="Mission screens" className="-mx-1 overflow-x-auto pb-1">
         <ul className="row list-none gap-1 px-1 p-0" style={{ flexWrap: "nowrap" }}>
           {SCREENS.map((s) => {
