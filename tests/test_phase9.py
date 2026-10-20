@@ -61,8 +61,8 @@ def test_pos_ai_hal_01_hallucination_quarantined():
 async def test_pos_sec_01_cross_tenant_denied() -> None:
     mk = await _mk()
     async with mk() as s:
-        s.add(Mission(id="m1", tenant_id="t1", workspace_id="w", title="T1", currency="EUR"))
-        s.add(Mission(id="m2", tenant_id="t2", workspace_id="w", title="T2", currency="EUR"))
+        s.add(Mission(id="m1", tenant_id="t1", workspace_id="w", title="T1", currency="INR"))
+        s.add(Mission(id="m2", tenant_id="t2", workspace_id="w", title="T2", currency="INR"))
         await s.commit()
         mine = (await s.execute(select(Mission).where(Mission.tenant_id == "t1"))).scalars().all()
         assert [m.id for m in mine] == ["m1"]
@@ -89,13 +89,14 @@ async def test_pos_appr_01_single_lane_insufficient_over_threshold() -> None:
                 tenant_id="t1",
                 workspace_id="w",
                 title="M",
-                currency="EUR",
+                currency="INR",
                 state="approval",
             )
         )
         await s.commit()
-        # Server-computed value (04 s2): certify S1's TCO at EUR 60k so the
-        # AWARD escalates to dual lanes even though the payload declares 1.
+        # Server-computed value (04 s2): certify a TCO of INR 6,00,000 for
+        # S1, above the INR 5,00,000 dual-control threshold, so the AWARD
+        # escalates to dual lanes even though the payload declares 1.
         s.add(
             CostResult(
                 tenant_id="t1",
@@ -103,8 +104,8 @@ async def test_pos_appr_01_single_lane_insufficient_over_threshold() -> None:
                 run_id="",
                 supplier_id="S1",
                 scenario_id="",
-                tco_minor=6_000_000,
-                build_up={"price": 6_000_000},
+                tco_minor=60_000_000,
+                build_up={"price": 60_000_000},
             )
         )
         await s.commit()

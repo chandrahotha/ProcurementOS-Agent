@@ -151,3 +151,17 @@ def run_with_fallback(
 
 
 _BREAKER = CircuitBreaker()
+
+
+def reset_circuit_breaker() -> None:
+    """Clear the process-wide circuit breaker.
+
+    The breaker is a module-level singleton on purpose: the provider is a
+    shared dependency, so an outage should stop every caller from waiting
+    on it. That makes it global state, and global state has to be
+    resettable — a test that trips the breaker would otherwise silence the
+    provider for the rest of the process, and the failure would show up in
+    an unrelated test.
+    """
+    _BREAKER.failures = 0
+    _BREAKER.opened_until = 0.0

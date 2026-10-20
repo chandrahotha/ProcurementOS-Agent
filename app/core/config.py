@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""
     web_origin: str = "http://localhost:3000"
+    # True when a reverse proxy fronts the API. Only then is
+    # `X-Forwarded-For` believed: trusting it unconditionally would let a
+    # client forge its address and walk past the rate limit.
+    trusted_proxy: bool = False
     ai_timeout_s: int = 30
     ai_circuit_breaker_s: int = 60
     # Real AI provider (B49): when a base URL is configured, AI touchpoints

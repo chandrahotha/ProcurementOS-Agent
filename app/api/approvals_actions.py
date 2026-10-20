@@ -79,7 +79,13 @@ async def request_approvals(
     return ok(
         {
             "approvals": [
-                {"id": r.id, "lane": r.lane, "status": r.status, "expires_at": r.expires_at}
+                {
+                    "id": r.id,
+                    "lane": r.lane,
+                    "status": r.status,
+                    # B44: the column is a timestamp; the wire format is ISO-8601.
+                    "expires_at": r.expires_at.isoformat() if r.expires_at is not None else None,
+                }
                 for r in rows
             ]
         },

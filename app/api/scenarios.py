@@ -253,6 +253,7 @@ async def decision_brief(
     evidence_note = "Every figure traces to result rows with evidence refs or a recorded waiver."
     ai_ran = False
     ai_status = "not_configured"
+    ai_draft: dict[str, Any] | None = None
     brief = {
         "winner_supplier_id": winner.supplier_id if winner else None,
         "winner_tco_minor": winner.tco_minor if winner else None,
@@ -261,7 +262,7 @@ async def decision_brief(
         "exceptions": {"stale_fx_suppliers": stale, "lines_ranked": len(sourcing)},
         "evidence_note": evidence_note,
         "cited_lines": [wline, cline],
-        "ai": {"ran": ai_ran, "status": ai_status},
+        "ai": {"ran": ai_ran, "status": ai_status, "verdict": "", "cited": False},
     }
     if settings.ai_primary_base_url:
         import asyncio
@@ -300,8 +301,13 @@ async def decision_brief(
         )
         session.add(job)
         await session.flush()
-        # Hallucination guard: the note is labeled analytical (zero
-        # authority); unreferenced claims would quarantine.
+        # Hallucination guard (POS-AI-HAL-01): the note is labeled
+        # analytical, so an unreferenced claim is *accepted with zero
+        # authority* — it may not be laundered into the evidence note.
+        # Only an evidence-linked claim replaces the deterministic note; an
+        # unreferenced one is surfaced separately, with its citation state
+        # visible, so a reader can see it is uncited rather than being
+        # handed a claim dressed as a certified fact.
         scan = scan_output(
             {
                 "text": str(res.payload.get("text", "")),
@@ -309,20 +315,39 @@ async def decision_brief(
                 "label": "analytical",
             }
         )
-        if scan["verdict"].startswith("accept") and res.payload.get("text"):
+        ai_text = str(res.payload.get("text", ""))
+        ai_refs = list(res.payload.get("evidence_refs", []))
+        cited = scan["verdict"] == "accept"
+        if ai_text:
             session.add(
                 AIResult(
+                    tenant_id=m.tenant_id,
                     job_id=job.id,
                     schema_name="brief_note",
                     payload_json=res.payload,
-                    evidence_refs=list(res.payload.get("evidence_refs", [])),
+                    evidence_refs=ai_refs,
                     label="AI draft",
                 )
             )
-            evidence_note = str(res.payload["text"])
+            if cited:
+                evidence_note = ai_text
+            else:
+                ai_draft = {
+                    "text": ai_text,
+                    "cited": False,
+                    "verdict": scan["verdict"],
+                    "note": "AI analysis, uncited: it explains but certifies nothing.",
+                }
+        brief["ai"] = {
+            "ran": ai_ran,
+            "status": ai_status,
+            "verdict": scan["verdict"],
+            "cited": cited,
+        }
         await session.commit()
         brief["evidence_note"] = evidence_note
-        brief["ai"] = {"ran": ai_ran, "status": ai_status}
+        if ai_draft is not None:
+            brief["ai_draft"] = ai_draft
     # The brief is computed on demand from certified rows (B9): the
     # brief_generated timeline/audit events persist ONCE per mission — not
     # per read — so the gate signal stays real without unbounded growth on

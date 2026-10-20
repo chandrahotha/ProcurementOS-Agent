@@ -109,6 +109,11 @@ async def list_approvals(
                     "action_class": r.action_class,
                     "expires_at": r.expires_at,
                     "payload_hash": r.payload_hash[:16],
+                    # The approved payload itself, not only its hash: an
+                    # approver has to see what they are approving, and the
+                    # action panel has to carry the *same* payload back or
+                    # the hash-locked advance is refused.
+                    "payload": r.payload_json or {},
                 }
                 for r in rows
             ]
@@ -160,33 +165,18 @@ async def audit_verify(
 ) -> Any:
     """Re-walk the tenant's hash chain end to end (B34): tamper detection."""
     rid = get_request_id(request)
-    from app.audit.writer import chain_hash
+    # The walk lives in app/audit/writer.py so the endpoint and the
+    # action->report gate (`audit_complete`) use one implementation and
+    # cannot disagree about whether the chain is intact.
+    from app.audit.writer import verify_chain
 
-    q = (
-        select(AuditEvent)
-        .where(AuditEvent.tenant_id == principal.tenant_id)
-        .order_by(AuditEvent.created_at, AuditEvent.id)
-    )
-    rows = (await session.execute(q)).scalars().all()
-    prev = "GENESIS"
-    broken_at: str | None = None
-    for r in rows:
-        body = {
-            "tenant": r.tenant_id,
-            "action": r.action,
-            "actor": r.actor_id,
-            "mission": r.mission_id,
-            "object": [r.object_type, r.object_id],
-            "before": r.before_hash,
-            "after": r.after_hash,
-            "request": r.request_id,
-        }
-        if r.prev_hash != prev or chain_hash(prev, body) != r.event_hash:
-            broken_at = r.id
-            break
-        prev = r.event_hash
+    result = await verify_chain(session, principal.tenant_id)
     return ok(
-        {"events_checked": len(rows), "intact": broken_at is None, "broken_at": broken_at},
+        {
+            "events_checked": result["events"],
+            "intact": result["intact"],
+            "broken_at": result["broken_at"],
+        },
         rid,
     )
 
@@ -569,6 +559,11 @@ async def list_ai_jobs(
                     "status": j.status,
                     "error": j.error,
                     "result_label": results[j.id].label if j.id in results else None,
+                    # The citations travel with the row: an AI claim without
+                    # them is not reviewable (POS-AI-HAL-01).
+                    "evidence_refs": (
+                        list(results[j.id].evidence_refs or []) if j.id in results else []
+                    ),
                     "at": j.created_at.isoformat(),
                 }
                 for j in jobs

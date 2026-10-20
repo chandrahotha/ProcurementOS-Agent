@@ -27,25 +27,29 @@ from app.models.foundation import Approval
 from app.models.mission import CostResult, RuleVersion
 
 EXPIRY_DAYS = 7
-DEFAULT_THRESHOLD_MINOR = 5_000_000  # EUR 50k fallback when no rule row
+DEFAULT_THRESHOLD_MINOR = 50_000_000  # INR 5,00,000 fallback when no rule row
 
 
 class ApprovalError(Exception):
     pass
 
 
-def _expiry() -> str:
-    return (datetime.now(UTC) + timedelta(days=EXPIRY_DAYS)).isoformat()
+def _expiry() -> datetime:
+    return datetime.now(UTC) + timedelta(days=EXPIRY_DAYS)
 
 
-def _expired(expires_at: str | None) -> bool:
-    if not expires_at:
+def _expired(expires_at: datetime | None) -> bool:
+    """True when the approval window has closed.
+
+    B44: the column is a real timestamp now, so there is no unparseable
+    value to guess about — the database refuses to store one. A naive
+    datetime (a row written by hand, or a driver that dropped the offset)
+    is read as UTC rather than as local time.
+    """
+    if expires_at is None:
         return False
-    try:
-        exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-        return datetime.now(UTC) > exp
-    except Exception:
-        return True
+    exp = expires_at if expires_at.tzinfo is not None else expires_at.replace(tzinfo=UTC)
+    return datetime.now(UTC) > exp
 
 
 async def certified_award_value(

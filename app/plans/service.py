@@ -6,6 +6,52 @@ import hashlib
 import json
 from typing import Any
 
+#: The canonical call shape for each tool.
+#:
+#: A plan task is "run this tool with arguments of this shape". Before
+#: this existed the task rows carried `{"depends_on": [...]}` as their
+#: arguments, so every tool with a required argument was dispatched with
+#: the wrong payload and blocked itself — a plan that acknowledged and then
+#: could not do anything.
+#:
+#: These are the *shape*, not fabricated data: the values are neutral
+#: (zeroed cost, an empty line list, an empty dimension map), so running a
+#: plan task exercises the tool's contract without inventing a number.
+#: The certified figures for a mission come from the analysis suite
+#: (`POST /missions/{id}/analyze`), not from here.
+CANONICAL_ARGS: dict[str, dict[str, Any]] = {
+    "extract_candidates": {},
+    "normalize_quote_line": {
+        "line_id": "plan-template",
+        "supplier_id": "S-PLANNED",
+        "qty": "1",
+        "uom": "pcs",
+        "unit_price_minor": 0,
+        "currency": "INR",
+        "tax_mode": "exempt",
+        "base_uom": "pcs",
+        "target_ccy": "INR",
+    },
+    "compute_sourcing_rank": {"lines": []},
+    "compute_supplier_kpis": {"transactions": []},
+    "compute_tco": {
+        "price_minor": 0,
+        "freight_minor": 0,
+        "insurance_minor": 0,
+        "tooling_minor": 0,
+        "tax_minor": 0,
+        "discount_minor": 0,
+    },
+    "score_risk": {"dimensions": {}},
+    "optimize_scenario": {"demand": 0, "offers": []},
+    "draft_message": {
+        "candidate_cost_minor": 0,
+        "batna_cost_minor": 0,
+        "draft_price_minor": 0,
+    },
+    "render_dry_run": {},
+}
+
 # Canonical task skeleton per mission (tools must be allowlist members).
 PLAN_SKELETON: list[dict[str, Any]] = [
     {

@@ -177,17 +177,28 @@ async def _persist_external(
 
 async def _deliver(mo: Any) -> bool:
     """Best-effort real send through the configured transport. False when no
-    transport is configured (the message stays queued in the outbox)."""
+    transport is configured (the message stays queued in the outbox).
+
+    The destination is checked against the egress policy first
+    (`app/core/egress.py`): the scheme must be http(s), and the host must
+    be on the allowlist when one is configured. Redirects are not followed,
+    so a 302 cannot walk the request to a host the policy would refuse.
+    """
     try:
         import httpx
 
         from app.core.config import settings
+        from app.core.egress import EgressDeniedError, check_url
 
         if not settings.outbox_webhook_url:
             return False
-        async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            url = check_url(settings.outbox_webhook_url)
+        except EgressDeniedError:
+            return False
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
             r = await client.post(
-                settings.outbox_webhook_url,
+                url,
                 json={
                     "to": mo.recipient,
                     "subject": mo.subject,

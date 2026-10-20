@@ -74,7 +74,15 @@ async def _seed(sub):
         await conn.run_sync(Base.metadata.create_all)
     mk = async_sessionmaker(engine, expire_on_commit=False)
     async with mk() as s:
-        u = User(tenant_id="t1", email="op@x.io", name="Op", api_token="tok-op", oidc_sub=sub)
+        # `tok-op` is a synthetic token for an in-memory test database; it
+        # authenticates nobody and exists only to give the row a handle.
+        u = User(
+            tenant_id="t1",
+            email="op@x.io",
+            name="Op",
+            api_token="tok-op",  # noqa: S106 - synthetic test value
+            oidc_sub=sub,
+        )
         s.add(u)
         await s.flush()
         s.add(

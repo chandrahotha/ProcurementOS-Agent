@@ -47,7 +47,7 @@ async def test_agent_002_award_blocked_then_once_idempotent() -> None:
                 tenant_id="t1",
                 workspace_id="w1",
                 title="M1",
-                currency="EUR",
+                currency="INR",
                 state="approval",
             )
         )
@@ -72,9 +72,10 @@ async def test_agent_002_award_blocked_then_once_idempotent() -> None:
         m = (await s.execute(select(Mission).where(Mission.id == "m1"))).scalar_one()
         assert m.state == "approval"
 
-        # 2) Server-computed value (04 s2): certify TCO of EUR 60k for S1,
-        # then request AWARD -> lanes managerial + finance. The client's
-        # forged value_minor=1 in the payload cannot downgrade lanes.
+        # 2) Server-computed value (04 s2): certify a TCO of INR 6,00,000 for
+        # S1, above the INR 5,00,000 dual-control threshold, then request
+        # AWARD -> lanes managerial + finance. The client's forged
+        # value_minor=1 in the payload cannot downgrade lanes.
         s.add(
             CostResult(
                 tenant_id="t1",
@@ -82,8 +83,8 @@ async def test_agent_002_award_blocked_then_once_idempotent() -> None:
                 run_id="",
                 supplier_id="S1",
                 scenario_id="",
-                tco_minor=6_000_000,
-                build_up={"price": 6_000_000},
+                tco_minor=60_000_000,
+                build_up={"price": 60_000_000},
             )
         )
         await s.flush()
@@ -185,7 +186,7 @@ async def test_agent_003_hostile_doc_no_mutation() -> None:
                 tenant_id="t1",
                 workspace_id="w1",
                 title="Hostile",
-                currency="EUR",
+                currency="INR",
                 state="evidence",
             )
         )
@@ -231,7 +232,7 @@ async def test_approval_expiry_refuses_decisions() -> None:
                 tenant_id="t1",
                 workspace_id="w1",
                 title="Expiry",
-                currency="EUR",
+                currency="INR",
                 state="approval",
             )
         )
@@ -256,7 +257,7 @@ async def test_approval_expiry_refuses_decisions() -> None:
         )
         row = rows[0]
         # Force the row expired: EXPIRY_DAYS would keep it live for 7 days.
-        row.expires_at = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        row.expires_at = datetime.now(UTC) - timedelta(days=1)
         await s.flush()
         import pytest as _pytest
 
@@ -292,7 +293,7 @@ async def test_decide_is_terminal() -> None:
                 tenant_id="t1",
                 workspace_id="w1",
                 title="Term",
-                currency="EUR",
+                currency="INR",
                 state="approval",
             )
         )

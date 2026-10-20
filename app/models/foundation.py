@@ -57,7 +57,7 @@ class Role(TenantScoped):
 class Workspace(TenantScoped):
     __tablename__ = f"{PREFIX}workspace"
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    budget_currency: Mapped[str] = mapped_column(String(3), default="EUR")
+    budget_currency: Mapped[str] = mapped_column(String(3), default="INR")
     members: Mapped[list[Any]] = mapped_column(JSON, default=list)  # [{user_id, roles[]}]
 
 
@@ -131,6 +131,13 @@ class EvidenceSpan(TenantScoped):
     extractor_version: Mapped[str] = mapped_column(String(32), default="1.0.0")
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     instruction_flag: Mapped[bool] = mapped_column(Boolean, default=False)
+    # B45: the value this span held before anybody corrected it. It is the
+    # "base" of the three-way diff, so a second correction that disagrees
+    # with a pending one is a *conflict* rather than a silent overwrite.
+    base_value: Mapped[str] = mapped_column(Text, default="")
+    # "" (no conflict), "conflict" (a correction disagreed and was refused),
+    # "resolved" (a human settled it).
+    conflict_state: Mapped[str] = mapped_column(String(32), default="")
 
 
 class Transaction(TenantScoped):
@@ -144,8 +151,11 @@ class Transaction(TenantScoped):
     accepted: Mapped[bool] = mapped_column(Boolean, default=True)
     defects: Mapped[int] = mapped_column(Integer, default=0)
     price_minor: Mapped[int] = mapped_column(Integer, default=0)
-    currency: Mapped[str] = mapped_column(String(3), default="EUR")
-    ordered_at: Mapped[str] = mapped_column(String(64), default="")
+    currency: Mapped[str] = mapped_column(String(3), default="INR")
+    # B44: a real timestamp column, not an ISO string in a VARCHAR. String
+    # comparison of timestamps is lexicographic and an unparseable value
+    # silently sorted as if it were the smallest date.
+    ordered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
@@ -184,7 +194,10 @@ class Approval(TenantScoped):
     approvers_required: Mapped[int] = mapped_column(Integer, default=1)
     decisions: Mapped[list[Any]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(32), default="pending")
-    expires_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # B44: a real timestamp column. A VARCHAR expiry meant an unparseable
+    # value was compared as a string, and `_expired` had to guess — the
+    # database now refuses to store an expiry that is not a timestamp.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuditEvent(TenantScoped):

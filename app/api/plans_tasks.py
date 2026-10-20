@@ -18,11 +18,18 @@ from app.core.request_id import get_request_id
 from app.db import get_session
 from app.models.foundation import AuditEvent
 from app.models.mission import Mission, MissionPlan, MissionRun, MissionTask, TimelineEvent
-from app.plans.service import PLAN_SKELETON, dag_hash, diff_plans, validate_dag
+from app.plans.service import (
+    CANONICAL_ARGS,
+    PLAN_SKELETON,
+    dag_hash,
+    diff_plans,
+    validate_dag,
+)
 from app.tools.registry import ALLOWLIST
 
 router = APIRouter()
 
+WRITERS = {BUYER, MANAGER, ADMIN}
 REVIEW_ROLES = {BUYER, MANAGER, ADMIN}
 FORBIDDEN = (403, "forbidden", "Forbidden for role.")
 
@@ -64,7 +71,12 @@ async def generate_plan(
         return not_found(request, e)
     plans = await rows_for(session, MissionPlan, m.id)
     v = max([p.version for p in plans], default=0) + 1
-    specs = [dict(t) for t in PLAN_SKELETON]
+    # Each spec carries the tool's canonical call shape, so the plan is
+    # self-describing: a reader can see exactly what each step will invoke
+    # and with what arguments, and the DAG hash covers it.
+    specs = [
+        {**dict(t), "args": dict(CANONICAL_ARGS.get(str(t.get("tool")), {}))} for t in PLAN_SKELETON
+    ]
     errors = validate_dag(specs, set(ALLOWLIST))
     if errors:
         return err(
@@ -98,7 +110,10 @@ async def generate_plan(
                 key=t["key"],
                 title=t["title"],
                 tool_name=t["tool"],
-                args_json={"depends_on": t.get("depends_on", [])},
+                # The tool's own arguments, not the dependency list: a task
+                # dispatched with `{"depends_on": [...]}` blocks itself on
+                # the first tool with a required argument.
+                args_json=dict(t.get("args") or {}),
                 idempotency_key=f"{m.id}:v{v}:{t['key']}",
                 assigned_role=role,
             )
@@ -207,18 +222,50 @@ async def acknowledge_plan(
     # Wire the queue (B1): acknowledged plans enqueue their tasks onto the
     # pos:* namespace. Best-effort — a down Redis leaves tasks on the board
     # (the retry path still works) but the acknowledge itself must not fail.
+    #
+    # The queue is probed ONCE, not once per task: a down Redis used to be
+    # discovered ten times in a row, each attempt paying the connect
+    # timeout, which turned one acknowledgement into a ten-second hang.
     enqueued = 0
+    execution = "queue"
     try:
-        from worker.queue import enqueue_task
+        from worker.queue import enqueue_task, queue_available
 
         task_rows = await rows_for(session, MissionTask, m.id)
-        for t in task_rows:
-            if t.plan_version == version and t.status == "queued":
+        pending = [t for t in task_rows if t.plan_version == version and t.status == "queued"]
+        if pending and queue_available():
+            for t in pending:
                 enqueue_task(m.id, t.key, t.idempotency_key or t.id)
                 enqueued += 1
+        elif pending:
+            # No broker. Rather than leave the plan acknowledged with every
+            # task stuck in `queued` — a mission that never moves and never
+            # says why — run the plan here, in this process. Same
+            # apply_task, same policy checks, same audit events; only the
+            # transport differs. The response says which happened.
+            from worker.queue import execute_plan_tasks
+
+            outcome = await execute_plan_tasks(
+                session,
+                m.id,
+                actor_id=principal.user_id,
+                request_id=rid,
+                autonomy_level=m.autonomy_level,
+            )
+            execution = "inline"
+            enqueued = int(outcome.get("ran", 0))
     except Exception:
         enqueued = 0
-    return ok({"version": version, "status": p.status, "enqueued": enqueued}, rid)
+    await session.commit()
+    return ok(
+        {
+            "version": version,
+            "status": p.status,
+            "enqueued": enqueued,
+            "execution": execution,
+        },
+        rid,
+    )
 
 
 @router.get("/missions/{mission_id}/tasks")
@@ -254,6 +301,40 @@ async def task_board(
         },
         get_request_id(request),
     )
+
+
+@router.post("/missions/{mission_id}/tasks/run")
+async def run_plan(
+    mission_id: str,
+    request: Request,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Run the current plan's tasks now, in this process.
+
+    The queue runs them when a broker is available. This is the manual
+    equivalent for the case where there is not one, and the way a user
+    unsticks a board whose tasks are sitting in `queued` because the worker
+    was down when the plan was acknowledged.
+    """
+    rid = get_request_id(request)
+    if not set(principal.roles) & WRITERS:
+        return err(403, "forbidden", "Forbidden for role.", rid)
+    try:
+        m = await must_mission(session, principal, mission_id)
+    except Exception as e:
+        return not_found(request, e)
+    from worker.queue import execute_plan_tasks
+
+    outcome = await execute_plan_tasks(
+        session,
+        m.id,
+        actor_id=principal.user_id,
+        request_id=rid,
+        autonomy_level=m.autonomy_level,
+    )
+    await session.commit()
+    return ok(outcome, rid)
 
 
 class ReviewBody(BaseModel):

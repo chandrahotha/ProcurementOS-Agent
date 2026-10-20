@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import TenantScoped
@@ -29,9 +30,13 @@ class Mission(TenantScoped):
     template_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     category: Mapped[str] = mapped_column(String(64), default="general")
-    currency: Mapped[str] = mapped_column(String(3), default="EUR")
+    # Reporting currency for the mission. The product targets Indian
+    # procurement, so the base currency is INR; a mission may still be
+    # denominated in another currency, and the engine converts.
+    currency: Mapped[str] = mapped_column(String(3), default="INR")
     budget_cap_minor: Mapped[int] = mapped_column(Integer, default=0)
-    deadline: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # B44: a real timestamp column, not an ISO string in a VARCHAR.
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     autonomy_level: Mapped[str] = mapped_column(String(16), default="SUPERVISED")
     state: Mapped[str] = mapped_column(String(32), default="intake")
     coverage_pct: Mapped[int] = mapped_column(Integer, default=0)

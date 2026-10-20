@@ -15,6 +15,7 @@ from app.auth.roles import ADMIN, BUYER, MANAGER
 from app.core.envelope import ok
 from app.core.request_id import get_request_id
 from app.db import get_session
+from app.evidence.conflicts import three_way_diff
 from app.ingest.instructions import planning_inputs_clean, scan
 from app.models.foundation import EvidenceSpan
 
@@ -50,6 +51,8 @@ def _dto(s: EvidenceSpan) -> dict[str, Any]:
         "extractor": s.extractor,
         "extractor_version": s.extractor_version,
         "instruction_flag": s.instruction_flag,
+        # B45: the conflict state the analysis->scenarios gate reads.
+        "conflict_state": s.conflict_state,
     }
 
 
@@ -189,8 +192,59 @@ async def correct_span(
     s = q.scalar_one_or_none()
     if s is None:
         return err(404, "not_found", "No such span.", rid)
+    # B45: a correction that disagrees with a pending one is a conflict,
+    # not a silent overwrite. The first correction establishes the base;
+    # a later correction is compared against it with the three-way diff
+    # (app/evidence/conflicts.py): reverting to the base value or
+    # repeating the current value resolves, anything else conflicts.
+    if not s.base_value:
+        s.base_value = s.field_value
+    diff = three_way_diff(
+        {"field_value": s.base_value},
+        {"field_value": s.field_value},
+        {"field_value": body.field_value},
+    )
+    if diff["needs_retry"]:
+        s.conflict_state = "conflict"
+        await aud(
+            session,
+            request,
+            principal,
+            "evidence_conflict",
+            m,
+            "evidence_span",
+            s.id,
+            after={
+                "proposed_field_value": body.field_value,
+                "current_field_value": s.field_value,
+                "base_field_value": s.base_value,
+            },
+            reason=body.reason or None,
+        )
+        await log_timeline(
+            session,
+            tenant_id=m.tenant_id,
+            mission_id=m.id,
+            kind="evidence.conflict",
+            payload={"span_id": s.id, "conflicts": diff["conflicts"]},
+            actor_id=principal.user_id,
+        )
+        await session.commit()
+        return err(
+            409,
+            "evidence_conflict",
+            "Another correction is pending on this field; resolve it before correcting again.",
+            rid,
+            details={
+                "span_id": s.id,
+                "base_field_value": s.base_value,
+                "current_field_value": s.field_value,
+                "proposed_field_value": body.field_value,
+            },
+        )
     before = {"field_value": s.field_value}
     s.field_value = body.field_value
+    s.conflict_state = ""
     # B10: corrections are re-scanned — hostile text injected via the
     # correction endpoint is quarantined like any other span.
     flag = scan(body.field_value or s.quoted_text)

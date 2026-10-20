@@ -20,12 +20,14 @@ from app.api import (
     evidence,
     misc,
     missions,
+    ops,
     plans_tasks,
     runs_export,
     scenarios,
 )
 from app.core.config import settings
 from app.core.envelope import Meta
+from app.core.observe import record_request
 from app.core.ratelimit import RateLimitMiddleware
 from app.core.request_id import RequestIDMiddleware, get_request_id
 from app.db import get_session
@@ -44,6 +46,29 @@ app.add_middleware(
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(RateLimitMiddleware)
 
+
+@app.middleware("http")
+async def observe_requests(request: Request, call_next: Any) -> Any:
+    """Record request count, errors and duration for the metrics endpoint."""
+    import time
+
+    started = time.perf_counter()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        return response
+    finally:
+        route = request.scope.get("route")
+        path = getattr(route, "path", None) or request.url.path
+        record_request(
+            request.method,
+            str(path),
+            status,
+            (time.perf_counter() - started) * 1000.0,
+        )
+
+
 for router in (
     missions.router,
     plans_tasks.router,
@@ -54,6 +79,7 @@ for router in (
     runs_export.router,
     auth_routes.router,
     misc.router,
+    ops.router,
 ):
     app.include_router(router, prefix=API_PREFIX)
     # /cases/* mirrors /missions/* for template compatibility (same handlers).

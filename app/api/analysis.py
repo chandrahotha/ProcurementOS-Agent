@@ -36,7 +36,7 @@ class AnalyzeBody(BaseModel):
     transactions: list[dict[str, Any]] = []
     tco_items: list[dict[str, Any]] = []
     risk: dict[str, Any] = {}
-    target_currency: str = "EUR"
+    target_currency: str = "INR"
     base_uom: str = "pcs"
 
 

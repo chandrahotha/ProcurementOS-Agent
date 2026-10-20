@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
@@ -18,6 +19,7 @@ from app.api.common import (
     not_found,
     rows_for,
 )
+from app.audit.writer import chain_intact
 from app.auth.deps import Principal, get_principal
 from app.auth.roles import ADMIN, BUYER, MANAGER
 from app.core.envelope import ok
@@ -45,7 +47,7 @@ class MissionCreate(BaseModel):
     workspace_id: str
     title: str = Field(min_length=3, max_length=300)
     category: str = "general"
-    currency: str = Field(default="EUR", min_length=3, max_length=3)
+    currency: str = Field(default="INR", min_length=3, max_length=3)
     budget_cap_minor: int = 0
     deadline: str | None = None
     autonomy_level: str = "SUPERVISED"
@@ -78,7 +80,9 @@ def _dto(m: Mission) -> dict[str, Any]:
         "category": m.category,
         "currency": m.currency,
         "budget_cap_minor": m.budget_cap_minor,
-        "deadline": m.deadline,
+        # B44: the column is a real timestamp; the wire format stays ISO-8601
+        # so the browser and the API agree on one representation.
+        "deadline": m.deadline.isoformat() if m.deadline is not None else None,
         "autonomy_level": m.autonomy_level,
         "state": m.state,
         "coverage_pct": m.coverage_pct,
@@ -86,6 +90,25 @@ def _dto(m: Mission) -> dict[str, Any]:
         "state_history": m.state_history,
         "lines": m.lines,
     }
+
+
+def _parse_deadline(raw: str | None) -> datetime | None:
+    """Parse an ISO-8601 deadline into an aware datetime (B44).
+
+    An empty value means "no deadline". A naive datetime is read as UTC
+    rather than as the server's local time, so the value does not shift
+    with the machine's timezone. A malformed value raises ValueError, which
+    the callers turn into a 422 — the string never reaches the database.
+    """
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 async def _tl(
@@ -117,13 +140,10 @@ async def create_mission(
         return err(403, "forbidden", "Forbidden for role.", rid)
     if body.autonomy_level not in ("ASSISTED", "SUPERVISED", "GUARDED"):
         return err(422, "validation_error", "Unknown autonomy level.", rid)
-    if body.deadline:
-        from datetime import datetime
-
-        try:
-            datetime.fromisoformat(body.deadline.replace("Z", "+00:00"))
-        except ValueError:
-            return err(422, "validation_error", "deadline must be an ISO date.", rid)
+    try:
+        deadline = _parse_deadline(body.deadline)
+    except ValueError:
+        return err(422, "validation_error", "deadline must be an ISO date.", rid)
     await must_member(session, principal, body.workspace_id)
     m = Mission(
         tenant_id=principal.tenant_id,
@@ -132,7 +152,7 @@ async def create_mission(
         category=body.category,
         currency=body.currency.upper(),
         budget_cap_minor=body.budget_cap_minor,
-        deadline=body.deadline,
+        deadline=deadline,
         autonomy_level=body.autonomy_level,
         template_id=body.template_id,
         state="intake",
@@ -202,11 +222,9 @@ async def patch_mission(
     rid = get_request_id(request)
     if not set(principal.roles) & WRITERS:
         return err(403, "forbidden", "Forbidden for role.", rid)
-    if body.deadline:
-        from datetime import datetime
-
+    if body.deadline is not None:
         try:
-            datetime.fromisoformat(body.deadline.replace("Z", "+00:00"))
+            deadline = _parse_deadline(body.deadline)
         except ValueError:
             return err(422, "validation_error", "deadline must be an ISO date.", rid)
     try:
@@ -231,10 +249,12 @@ async def patch_mission(
             m.id,
             after={"autonomy_level": m.autonomy_level},
         )
-    for f in ("title", "category", "currency", "budget_cap_minor", "deadline"):
+    for f in ("title", "category", "currency", "budget_cap_minor"):
         v = getattr(body, f)
         if v is not None:
             setattr(m, f, v)
+    if body.deadline is not None:
+        m.deadline = deadline
     await aud(session, request, principal, "mission_updated", m, "mission", m.id)
     await session.commit()
     return ok(_dto(m), rid)
@@ -250,14 +270,14 @@ async def _gate_context(
 
     docs = await rows_for(session, Document, m.id)
     plans = await rows_for(session, MissionPlan, m.id)
-    latest = max(plans, key=lambda p: p.version) if plans else None
+    latest: MissionPlan | None = max(plans, key=lambda p: p.version) if plans else None
     spans = await rows_for(session, EvidenceSpan, m.id)
     cov = coverage_of(
         [{"field_name": s.field_name, "instruction_flag": s.instruction_flag} for s in spans]
     )
     m.coverage_pct = cov["pct"]
-    dag_ok = bool(latest) and validate_dag(latest.taskspecs, set(ALLOWLIST)) == []
-    acked = bool(latest) and latest.status == "acknowledged"
+    dag_ok = latest is not None and validate_dag(latest.taskspecs, set(ALLOWLIST)) == []
+    acked = latest is not None and latest.status == "acknowledged"
     suppliers = {r.supplier_id for r in await rows_for(session, SourcingResult, m.id)}
     cands = (
         (
@@ -294,14 +314,22 @@ async def _gate_context(
             if args_overlap_flagged(t.args_json or {}, texts):
                 t.status = "blocked"
                 quarantine_ok = False
-    # idempotency_ok derived from real receipts (B45): every stored receipt
-    # carries its idempotency key. blocking_conflicts stays 0 until
-    # concurrent-correction conflicts are recorded (the three_way_diff
-    # module needs a base/mine/theirs structure corrections don't track yet).
+    # B45: the gates below are computed from real state, not hardcoded.
+    #
+    # * idempotency_ok — every stored receipt carries its idempotency key.
+    # * blocking_conflicts — evidence spans with an unresolved correction
+    #   conflict. The three-way diff (app/evidence/conflicts.py) is what
+    #   decides whether a second correction conflicts; the count here is
+    #   what the analysis gate refuses on.
+    # * audit_complete — the tenant's audit chain re-walks without a break.
+    #   A mission whose trail is tampered with does not get to report as
+    #   complete.
     receipt_events = [
         e for e in await rows_for(session, TimelineEvent, m.id) if e.kind == "action_receipt"
     ]
     idem_ok = all((e.payload or {}).get("idempotency_key") for e in receipt_events)
+    blocking_conflicts = sum(1 for s in spans if s.conflict_state == "conflict")
+    audit_ok = await chain_intact(session, m.tenant_id)
     return GateContext(
         title=bool(m.title),
         workspace=bool(m.workspace_id),
@@ -312,7 +340,7 @@ async def _gate_context(
         plan_acknowledged=acked,
         dag_ok=dag_ok,
         coverage_pct=cov["pct"],
-        blocking_conflicts=0,
+        blocking_conflicts=blocking_conflicts,
         coverage_waived=("coverage_waiver" in kinds),
         hostile_quarantined=quarantine_ok,
         suppliers_with_results=len(suppliers),
@@ -330,7 +358,7 @@ async def _gate_context(
         actions_settled=("actions_settled" in kinds),
         idempotency_ok=idem_ok,
         report_exported=("report_exported" in kinds),
-        audit_complete=True,
+        audit_complete=audit_ok,
         roles=principal.roles,
     )
 

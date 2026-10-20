@@ -1,28 +1,46 @@
 """Shared pytest fixtures: envelope assertions, request_id, synthetic tenant markers."""
 
+from collections.abc import Iterator
+
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.db import get_session
-from app.main import app
+# The HTTP harness lives in tests/harness.py so it can be imported by name
+# as well as used as a fixture. Re-exported here because pytest only
+# auto-discovers fixtures from conftest.py.
+from tests.harness import client, workspace_id  # noqa: F401
 
 
-@pytest.fixture()
-def client() -> TestClient:
-    """Client with an isolated in-memory sqlite session override: the
-    healthz DB probe must be environment-independent (the CI unit job has no
-    postgres service; local runs may not have one either)."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    mk = async_sessionmaker(engine, expire_on_commit=False)
+@pytest.fixture(autouse=True)
+def _reset_process_state() -> Iterator[None]:
+    """Clear the process-wide counters around every test.
 
-    async def override():
-        async with mk() as s:
-            yield s
+    Two pieces of application state are deliberately global — the AI
+    circuit breaker and the rate-limit counters — because both have to hold
+    across requests. A test suite that makes more than `LIMIT` writes in a
+    minute, or that trips the breaker with a provider-outage case, would
+    otherwise start answering itself with 429s and degraded fallbacks.
+    """
+    from app.ai.provider import reset_circuit_breaker
+    from app.core.ratelimit import reset_rate_limits
 
-    app.dependency_overrides[get_session] = override
-    yield TestClient(app)
-    app.dependency_overrides.pop(get_session, None)
+    reset_circuit_breaker()
+    reset_rate_limits()
+    yield
+    reset_circuit_breaker()
+    reset_rate_limits()
+
+
+@pytest.fixture(scope="module")
+def monkeypatch_module() -> Iterator[pytest.MonkeyPatch]:
+    """A module-scoped monkeypatch.
+
+    The built-in `monkeypatch` fixture is function-scoped, so a
+    module-scoped fixture that needs to set an environment variable (the
+    migration fixture points alembic at a throwaway database) needs its own.
+    """
+    mp = pytest.MonkeyPatch()
+    yield mp
+    mp.undo()
 
 
 def assert_envelope(body: dict, version: str = "v1") -> None:

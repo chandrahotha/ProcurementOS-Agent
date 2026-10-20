@@ -46,6 +46,26 @@ def session_token_digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def as_utc(value: datetime | None) -> datetime | None:
+    """Read a stored timestamp as an aware UTC datetime.
+
+    A `DateTime(timezone=True)` column is timezone-aware on Postgres and
+    naive on SQLite, which does not store an offset. Comparing the two
+    raises `TypeError: can't compare offset-naive and offset-aware
+    datetimes` — which is what happened to every session lookup on the
+    dev and test engine, and therefore to the whole credential-login
+    path, which no test had exercised.
+
+    A naive stored value is read as UTC, which is what it was written as:
+    every timestamp this module stores is `datetime.now(UTC)`.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 async def create_session(
     session: AsyncSession, *, tenant_id: str, user_id: str, ip: str = ""
 ) -> tuple[UserSession, str]:
@@ -70,7 +90,10 @@ async def principal_from_session(
         select(UserSession).where(UserSession.token_hash == session_token_digest(token))
     )
     row = q.scalar_one_or_none()
-    if row is None or row.revoked or row.expires_at < datetime.now(UTC):
+    if row is None or row.revoked:
+        return None
+    expires_at = as_utc(row.expires_at)
+    if expires_at is not None and expires_at < datetime.now(UTC):
         return None
     u = await session.get(User, row.user_id)
     if u is None or u.status != "active":

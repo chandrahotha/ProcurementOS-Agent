@@ -11,20 +11,24 @@ from engine.supplier_intel import compute_kpis
 
 
 def test_pos_norm_01_mixed_uom_currency_tax() -> None:
+    # Reporting currency is INR; a USD quote is converted at the quoted
+    # rate before it can be compared with an INR quote.
+    # USD/INR 83.50: 1 USD = 83.50 INR (RBI reference rate).
     fx = FxRate(
-        pair="USD/EUR", rate=Decimal("0.92"), source="ECB", quoted_at="2026-09-01T00:00:00Z"
+        pair="USD/INR", rate=Decimal("83.5"), source="RBI", quoted_at="2026-09-01T00:00:00Z"
     )
     a = sc.QuoteLine("L1", "S-A", Decimal("2"), "box", 1000, "USD", "exclusive", Decimal("0.19"))
-    b = sc.QuoteLine("L1", "S-B", Decimal("48"), "pcs", 90, "EUR", "inclusive")
-    na = sc.normalize_line(a, "pcs", "EUR", fx)
-    nb = sc.normalize_line(b, "pcs", "EUR", None)
+    b = sc.QuoteLine("L1", "S-B", Decimal("48"), "pcs", 5000, "INR", "inclusive")
+    na = sc.normalize_line(a, "pcs", "INR", fx)
+    nb = sc.normalize_line(b, "pcs", "INR", None)
     # A: price is per box -> 2 box x 1000c = 2000 +19% = 2380 USDc
-    #    -> EUR 2189.6 -> 2190 (price_uom honored; ADR-0005)
-    assert na.normalized_total_minor == 2190
-    assert nb.normalized_total_minor == 4320
+    #    -> 2380 x 83.50 = 198,730 INRc (price_uom honored; ADR-0005)
+    # B: 48 pcs x 5000c = 240,000 INRc, tax inclusive
+    assert na.normalized_total_minor == 198730
+    assert nb.normalized_total_minor == 240000
     ranked = sc.rank_lines([na, nb])
     assert [r.supplier_id for r in ranked] == ["S-A", "S-B"]
-    assert sc.savings_vs_baseline(4320, 2190) == 2130
+    assert sc.savings_vs_baseline(240000, 198730) == 41270
 
 
 def test_pos_norm_02_unknown_uom_blocks() -> None:
@@ -34,7 +38,7 @@ def test_pos_norm_02_unknown_uom_blocks() -> None:
 
 def test_fx_without_source_rejected() -> None:
     with pytest.raises(ValueError, match="source/time"):
-        convert_minor(100, "USD", "EUR", None)
+        convert_minor(100, "USD", "INR", None)
 
 
 def test_pos_tco_01_waterfall() -> None:
@@ -45,10 +49,10 @@ def test_pos_tco_01_waterfall() -> None:
 
 
 def test_pos_stale_01_flagged() -> None:
-    fx = FxRate("USD/EUR", Decimal("0.9"), "ECB", "2020-01-01T00:00:00Z")
-    r = cost_intel.tco(100, currency="USD", target_ccy="EUR", fx=fx, fx_now="2026-09-24T00:00:00Z")
+    fx = FxRate("USD/INR", Decimal("83.5"), "RBI", "2020-01-01T00:00:00Z")
+    r = cost_intel.tco(100, currency="USD", target_ccy="INR", fx=fx, fx_now="2026-09-24T00:00:00Z")
     assert r["stale_flag"] is True
-    assert r["fx"]["source"] == "ECB"
+    assert r["fx"]["source"] == "RBI"
 
 
 def test_pos_risk_01_thin_and_bands() -> None:
@@ -92,8 +96,8 @@ def test_bankers_rounding_per_line() -> None:
 
 def test_per_box_price_honored() -> None:
     # E1/ADR-0005: "2 boxes @ 18.00/box" totals 3600 minor — never 24x-inflated.
-    line = sc.QuoteLine("L1", "S-A", Decimal("2"), "box", 1800, "EUR", "inclusive")
-    n = sc.normalize_line(line, "pcs", "EUR", None)
+    line = sc.QuoteLine("L1", "S-A", Decimal("2"), "box", 1800, "INR", "inclusive")
+    n = sc.normalize_line(line, "pcs", "INR", None)
     assert n.normalized_total_minor == 3600
 
 
@@ -101,18 +105,18 @@ def test_price_uom_conversion() -> None:
     # Price quoted per box, quantity in pcs: the qty converts into the price
     # UOM before multiplying.
     line = sc.QuoteLine(
-        "L1", "S-A", Decimal("48"), "pcs", 1800, "EUR", "inclusive", price_uom="box"
+        "L1", "S-A", Decimal("48"), "pcs", 1800, "INR", "inclusive", price_uom="box"
     )
-    n = sc.normalize_line(line, "pcs", "EUR", None)
+    n = sc.normalize_line(line, "pcs", "INR", None)
     # 48 pcs = 2 boxes x 1800 = 3600 minor.
     assert n.normalized_total_minor == 3600
 
 
 def test_duplicate_lines_cheapest_kept() -> None:
     # E2: duplicate (line, supplier) pairs flag all but the cheapest.
-    a = sc.QuoteLine("L1", "S-A", Decimal("1"), "pcs", 500, "EUR", "inclusive")
-    b = sc.QuoteLine("L1", "S-A", Decimal("1"), "pcs", 400, "EUR", "inclusive")
-    normed = sc.compare_lines([a, b], "pcs", "EUR", None)
+    a = sc.QuoteLine("L1", "S-A", Decimal("1"), "pcs", 500, "INR", "inclusive")
+    b = sc.QuoteLine("L1", "S-A", Decimal("1"), "pcs", 400, "INR", "inclusive")
+    normed = sc.compare_lines([a, b], "pcs", "INR", None)
     kept = [n for n in normed if n.compliant]
     flagged = [n for n in normed if not n.compliant]
     assert len(kept) == 1 and kept[0].normalized_total_minor == 400
@@ -122,9 +126,9 @@ def test_duplicate_lines_cheapest_kept() -> None:
 def test_expired_validity_noncompliant() -> None:
     # E2: a quote valid until 2020 ranks non-compliant with a recorded note.
     line = sc.QuoteLine(
-        "L1", "S-A", Decimal("1"), "pcs", 500, "EUR", "inclusive", valid_until="2020-01-01"
+        "L1", "S-A", Decimal("1"), "pcs", 500, "INR", "inclusive", valid_until="2020-01-01"
     )
-    normed = sc.compare_lines([line], "pcs", "EUR", None, today="2026-09-25")
+    normed = sc.compare_lines([line], "pcs", "INR", None, today="2026-09-25")
     assert normed[0].compliant is False
     assert any("expired" in x for x in normed[0].notes)
     ranked = sc.rank_lines(normed)
@@ -133,13 +137,13 @@ def test_expired_validity_noncompliant() -> None:
 
 def test_rank_ties_break_by_line_id() -> None:
     # E11: ties are deterministic regardless of input order.
-    a = sc.QuoteLine("L2", "S-A", Decimal("1"), "pcs", 500, "EUR", "inclusive")
-    b = sc.QuoteLine("L1", "S-B", Decimal("1"), "pcs", 500, "EUR", "inclusive")
+    a = sc.QuoteLine("L2", "S-A", Decimal("1"), "pcs", 500, "INR", "inclusive")
+    b = sc.QuoteLine("L1", "S-B", Decimal("1"), "pcs", 500, "INR", "inclusive")
     r1 = sc.rank_lines(
-        [sc.normalize_line(a, "pcs", "EUR", None), sc.normalize_line(b, "pcs", "EUR", None)]
+        [sc.normalize_line(a, "pcs", "INR", None), sc.normalize_line(b, "pcs", "INR", None)]
     )
     r2 = sc.rank_lines(
-        [sc.normalize_line(b, "pcs", "EUR", None), sc.normalize_line(a, "pcs", "EUR", None)]
+        [sc.normalize_line(b, "pcs", "INR", None), sc.normalize_line(a, "pcs", "INR", None)]
     )
     assert [n.line_id for n in r1] == [n.line_id for n in r2] == ["L1", "L2"]
 
@@ -172,11 +176,13 @@ def test_allocate_single_supplier_zero_demand() -> None:
 
 
 def test_reverse_fx_pair_inverts() -> None:
-    # E10: a reverse quote (EUR/USD held, USD->EUR needed) inverts via Decimal.
+    # E10: a reverse quote (INR/USD held, USD->INR needed) inverts via
+    # Decimal. The held rate 0.01197605 is 1/83.5 to 8dp, so the derived
+    # forward rate is 83.49998539 and 1000 USDc converts to 83,500 INRc.
     fx = FxRate(
-        pair="EUR/USD", rate=Decimal("1.08695652"), source="ECB", quoted_at="2026-09-01T00:00:00Z"
+        pair="INR/USD", rate=Decimal("0.01197605"), source="RBI", quoted_at="2026-09-01T00:00:00Z"
     )
-    assert convert_minor(1000, "USD", "EUR", fx) == 920
+    assert convert_minor(1000, "USD", "INR", fx) == 83500
 
 
 def test_naive_fx_timestamp_not_always_stale() -> None:
@@ -194,8 +200,8 @@ def test_stale_fx_tco_never_certifies_award() -> None:
     r = tco(
         100,
         currency="USD",
-        target_ccy="EUR",
-        fx=FxRate("USD/EUR", Decimal("0.9"), "ECB", "2020-01-01T00:00:00Z"),
+        target_ccy="INR",
+        fx=FxRate("USD/INR", Decimal("83.5"), "RBI", "2020-01-01T00:00:00Z"),
         fx_now="2026-09-25T00:00:00Z",
     )
     assert r["stale_flag"] is True

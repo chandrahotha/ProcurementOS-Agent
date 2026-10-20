@@ -78,12 +78,21 @@ def dispatch(
     - Material tool without approval_id -> ToolDeniedError.
     - Write tools without idempotency key -> ToolDeniedError.
     Pure/deterministic: returns a result envelope; persistence is the caller's job.
+
+    On the payload hash: the registry checks that a material tool was
+    *authorised* (an approval id is present), not that the payload still
+    matches the approved one. The payload-hash match is enforced one layer
+    up, in `app.approvals.service.quorum_met`, which selects the approval
+    row by `Approval.payload_hash == payload_hash(payload)` — an approved
+    payload that was edited after approval matches no row and quorum fails.
+    `app.actions.service.execute` calls quorum_met *before* it dispatches, so
+    a material tool is never reached with an unmatched payload.
     """
     tool = ALLOWLIST.get(name)
     if tool is None:
         raise UnknownToolError(f"unknown tool {name!r}: rejected (closed registry)")
     if tool.name in MATERIAL_TOOLS and not approval_id:
-        raise ToolDeniedError(f"{name} requires quorum approval (payload hash match)")
+        raise ToolDeniedError(f"{name} requires quorum approval")
     if tool.idempotent and not idempotency_key:
         raise ToolDeniedError(f"{name} requires Idempotency-Key")
     handler = _HANDLERS.get(name, _echo)
@@ -144,7 +153,7 @@ def _normalize_quote_line(args: dict[str, Any]) -> dict[str, Any]:
         normalize_line(
             ql,
             str(args.get("base_uom", "pcs")),
-            str(args.get("target_ccy", "EUR")),
+            str(args.get("target_ccy", "INR")),
             _fx_of(args.get("fx")),
         )
     )
