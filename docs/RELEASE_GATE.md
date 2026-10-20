@@ -38,7 +38,7 @@ describes an intention ("wiring exists") is not a box at all.
 - [x] lint · typecheck · unit · integration · E2E · build green
       (2026-10-20) — `ruff check` and `ruff format --check` clean across
       `app worker engine seed tests alembic scripts`; `mypy --strict`
-      clean (88 files); `pytest` 162 passed + 5 skipped, with no warnings
+      clean (89 files); `pytest` 162 passed + 5 skipped, with no warnings
       (the skips are the Postgres leg, which the weekly job runs); `tsc`
       clean; `next build` green; `vitest` green; Playwright green.
 - [x] Every push and pull request is gated (2026-10-20) — the CI fast
