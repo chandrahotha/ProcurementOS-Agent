@@ -39,8 +39,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / "pos_demo.db"
 DB_URL = f"sqlite+aiosqlite:///{DB.as_posix()}"
-API_PORT = 8000
-WEB_PORT = 3000
+# The ports are configurable because 8000 and 3000 are popular, and a
+# port that is already taken by something else is a confusing failure: the
+# demo would attach to the other server, the web app would point at it,
+# and the sign-in would fail against an API that knows nothing about
+# missions.
+API_PORT = int(os.environ.get("POS_API_PORT", "8000"))
+WEB_PORT = int(os.environ.get("POS_WEB_PORT", "3000"))
 
 PERSONAS: tuple[tuple[str, str, str], ...] = (
     ("amara.buyer1@syn.example", "Buyer", "creates missions, uploads, analyses"),
@@ -93,16 +98,52 @@ def seed() -> int:
     return _run([sys.executable, "seed/make_demo_mission.py", "--db-url", DB_URL])
 
 
+def _port_is_free(port: int) -> bool:
+    """True when nothing is listening on the port.
+
+    The demo must not attach to a server it did not start: the other
+    server would answer the health check, the web app would be pointed at
+    it, and every sign-in would fail for a reason that looks like a bug in
+    the product.
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) != 0
+
+
+def _require_free_port(port: int, name: str) -> None:
+    if _port_is_free(port):
+        return
+    raise SystemExit(
+        f"port {port} is already in use, so the {name} cannot start there.\n"
+        f"Either stop whatever is listening on it, or run the demo on other ports:\n"
+        f"  $env:POS_API_PORT = 8010\n"
+        f"  $env:POS_WEB_PORT = 3010\n"
+        f"  python scripts/demo.py"
+    )
+
+
 def build_web() -> int:
     if not (ROOT / "web" / "node_modules").exists():
         print("\n== installing the web dependencies ==")
         if _run(["npm", "install", "--prefix", "web"]) != 0:
             return 1
     print("\n== building the web app ==")
-    return _run(["npm", "run", "build", "--prefix", "web"])
+    # The API address is baked into the client bundle at build time, so the
+    # build has to know which port the API will actually listen on.
+    npm = shutil.which("npm") or "npm"
+    env = {**os.environ, "NEXT_PUBLIC_API_BASE": f"http://localhost:{API_PORT}/api/v1"}
+    proc = subprocess.run(  # noqa: S603
+        [npm, "run", "build", "--prefix", "web"], cwd=ROOT, env=env, check=False
+    )
+    return proc.returncode
 
 
 def start() -> int:
+    _require_free_port(API_PORT, "API")
+    _require_free_port(WEB_PORT, "web app")
     env = {
         **os.environ,
         "DATABASE_URL": DB_URL,
@@ -124,6 +165,8 @@ def start() -> int:
     web = subprocess.Popen(  # noqa: S603
         [npm, "run", "start", "--prefix", "web"],
         cwd=ROOT,
+        # `next start` reads the port from the environment.
+        env={**os.environ, "PORT": str(WEB_PORT)},
         stdout=web_log,
         stderr=subprocess.STDOUT,
     )

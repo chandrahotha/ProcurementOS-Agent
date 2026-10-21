@@ -1,7 +1,12 @@
 # ADRs — ProcurementOS-Agent
 
-Architecture Decision Records. **Any deviation from `prerequisite-docs/` is
-recorded here, never by silently rewriting the brain.**
+Architecture Decision Records. **Any deviation from the product brief is
+recorded here, never by silently rewriting the brief.**
+
+The brief itself is the maintainer's private working document and is not part
+of this repository. The references to it in the records below are citations —
+they say where a decision came from — and the decisions themselves, and their
+consequences, are the public record.
 
 Format: `NNNN-title.md` with Status / Context / Decision / Consequences /
 Brain refs / Rollback.

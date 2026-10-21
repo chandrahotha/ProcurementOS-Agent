@@ -50,6 +50,11 @@ pos_dev.db
 # Local agent-tooling state, not product content
 .kilo/
 .sdlc/
+# The product brain. This is the maintainer's private working document, not
+# part of the published repository: it is the source of truth the
+# implementation is derived from, and the ADRs cite it, but it is not the
+# product and it does not belong in the public tree.
+prerequisite-docs/
 # Scratch DBs from local seed/E2E runs
 *.db
 *.sqlite3

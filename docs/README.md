@@ -1,8 +1,11 @@
 # Producer docs — ProcurementOS-Agent
 
-The product brain (`../prerequisite-docs/`, 12 files) is the **authoritative source
-of truth** and is never edited during the build. These producer docs track the
-build itself: progress, decisions, contracts, and operations.
+The product is built from a product brief that is the **authoritative source of
+truth** and is never edited during the build. That brief is the maintainer's
+private working document: it is deliberately kept out of this repository, so
+the references to it below are citations, not links. These producer docs are
+the public record — they track the build itself: progress, decisions,
+contracts, and operations.
 
 | Doc | Purpose |
 |---|---|
