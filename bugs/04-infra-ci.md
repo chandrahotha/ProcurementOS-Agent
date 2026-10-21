@@ -116,13 +116,35 @@ Status: `[ ]` open · `[x]` fixed · `[~]` deferred with ADR.
   never pass on a Windows clone. -> `.gitattributes` marks `*.pdf`,
   `*.xlsx`, `*.docm` and `*.png` as `binary` and checks everything else
   out as LF.
-- [ ] **C18** The CI chain on `main` is red, and not because of the code:
-  the last three push runs (`5ac0867`, `e99a287`, `1bf0aa4`) all fail in
-  the *first* job, `lint`, with zero steps executed and no log written,
-  which is the signature of a job that never started rather than of a
-  lint error (the same command passes locally, and the three weekly
-  scheduled runs before that were green through `unit`). Still open: the
-  run records show the shape of the failure but the job logs were never
-  produced, so the cause is not identified. Next: check the runner
-  availability and the account's Actions allowance, then re-run with
-  `workflow_dispatch` so a log exists.
+- [x] **C18** The CI chain on `main` was red, and not because of the
+  code: the last three push runs (`5ac0867`, `e99a287`, `1bf0aa4`) all
+  failed in the *first* job, `lint`, with zero steps executed and no log
+  written, which is the signature of a job that never started rather than
+  of a lint error (the same command passes locally, and the three weekly
+  scheduled runs before that were green through `unit`). The cause was
+  not a runner: it was the `actions/setup-node` pin, which had two
+  characters transposed (`4994 3ea...` for `4993 3ea...`), so the job
+  could not resolve the action it was pinned to and died while
+  downloading it — with no steps, because the failure was in the setup
+  and not in any of them. The pin is corrected and verified against the
+  tag it claims; the other two pins were already right. -> the whole
+  fast chain is green: lint, typecheck, unit, security-lint, dep-scan,
+  secret-scan and web. The failure was also worth reading twice: a job
+  that dies during setup records no steps, so the run says "lint:
+  failure" with an empty step list and reads like a lint error. It was
+  not.
+- [x] **C19** The Postgres leg could never have passed. The `pos_005`
+  migration converted three VARCHAR columns to timestamps and then asked
+  the database to change the column type, which Postgres refuses to do
+  implicitly ("column cannot be cast automatically to type timestamp
+  with time zone") — SQLite's batch mode recreates the table and coerces
+  the values in Python, so the local chain passed and the Postgres one
+  did not. The cast is now stated with `postgresql_using`, in both
+  directions. And `alembic/env.py` let `DATABASE_SYNC_URL` override a URL
+  that the *caller* had set explicitly, so the integration tests - which
+  ask for a scratch database - quietly migrated the main one instead and
+  then asserted that the scratch database had no tables in it. The
+  explicit instruction now wins; the environment variable is the
+  operator's fallback, not an override of the code that is asking.
+  -> the migration chain runs up, down and up again on Postgres, the seed
+  runs against it, and the five Postgres tests pass.

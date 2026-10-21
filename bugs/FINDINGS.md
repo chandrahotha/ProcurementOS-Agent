@@ -5,6 +5,9 @@ Date: 2026-09-25 · Scope: full repo (backend, frontend, engine, tests, seed, in
 **Status after the six fix waves (2026-09-25): every item closed, none open, twelve deferred with a rationale.**
 
 **Status after the completion pass (2026-10-20): 234 closed, 0 open, 0 deferred.**
+Every item that was deferred with a rationale has now been closed, each
+with a command that proves it. The pass also found and fixed defects the
+original audit did not reach — details in `docs/BUILD_LOG.md`.
 
 **Status after the verification pass (2026-10-21): 238 closed, 2 open, 0 deferred.**
 The whole fast gate chain was run against the tree on Windows. It found
@@ -21,9 +24,14 @@ ADR 0012). There is one credential now: an email and a password, exchanged
 for a session token. The `pos_user.api_token` column is dropped
 (`pos_007`), and the tests sign in through the login endpoint rather than
 around it.
-Every item that was deferred with a rationale has now been closed, each
-with a command that proves it. The pass also found and fixed defects the
-original audit did not reach — details in `docs/BUILD_LOG.md`.
+
+**Status after the CI pass (2026-10-21): 240 closed, 1 open, 0 deferred.**
+The CI chain runs, and the whole of it is green. The audit chain now
+carries its own order (C20 in `01-backend.md`, ADR 0013), the Postgres leg
+passes for the first time, and C18 — the CI chain dying in its first job
+— was not a runner problem after all: the `actions/setup-node` pin was a
+mistyped commit, so the job could not resolve its own action. One finding
+is still open, and it is the one thing nobody can fix from here.
 
 A note on the count, because the header used to be wrong and is now
 right: the audit described "232 raw findings → 160 deduplicated fix

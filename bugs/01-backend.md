@@ -137,23 +137,31 @@ proved.
   that could never match an approved hash, so the Execute button was
   permanently disabled. The approved payload now travels from the
   approval row to the action panel.
-- [ ] **C20** The audit chain stores a sequence but no sequence number.
+- [x] **C20** The audit chain stores a sequence but no sequence number.
   The writer links each event to the previous event's hash, and
   `verify_chain` reconstructs the order with
-  `ORDER BY created_at, id` — where `id` is `uuid4().hex`, a random
+  `ORDER BY created_at, id` - where `id` is `uuid4().hex`, a random
   value, not a monotonic one. Two events that share a `created_at` are
   therefore walked in random order, and the verifier reports a break in
-  a chain that is intact. It shows as an intermittent failure of
+  a chain that is intact. It showed as an intermittent failure of
   `tests/test_api.py::test_full_mission_walk` and
   `tests/test_gates_and_tools.py::test_a_conflict_is_recorded_in_the_audit_trail`
-  in the full suite; both pass in isolation, and the failure rate rises
-  with the number of events written in the same millisecond. Still open,
-  and recorded rather than patched here because it changes the semantics
-  of a security-critical verification. Two candidate fixes: a per-tenant
-  sequence number (a `pos_007` migration, and an order the verifier can
-  trust), or an order-independent verification that walks the chain from
-  its head by `prev_hash` instead of re-deriving the order from the
-  timestamps. Either way it wants its own ADR and its own tests.
+  in the full suite; both passed in isolation, and the failure rate rose
+  with the number of events written in the same millisecond. The writer
+  also linked events to a head it had read, with nothing stopping two
+  Postgres sessions from reading the same head and forking the chain -
+  the weekly Postgres leg had been failing on exactly that for a month.
+  -> ADR 0013: the timestamps along a chain strictly increase (the
+  writer nudges `created_at` forward a microsecond when the clock has
+  not moved on), the verifier walks the chain backwards from its head by
+  `prev_hash` instead of re-deriving the order from the rows, and
+  concurrent appends are serialised by a transaction-scoped Postgres
+  advisory lock keyed on the tenant. `tests/test_audit_chain.py` pins
+  what "intact" means: a linear chain verifies, and a tampered event, a
+  removed event, a fork and a shared timestamp are each caught (or, for
+  the timestamp, correctly not caught). The intermittent
+  `test_full_mission_walk` failure is gone, and the Postgres leg is
+  green for the first time.
 - [x] **C21** There were two ways to authenticate a request, and the
   weaker one did not need a secret: with no OIDC issuer configured, any
   `Bearer <token>` was matched against the digest in `pos_user.api_token`,

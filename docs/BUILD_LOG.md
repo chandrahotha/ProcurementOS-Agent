@@ -4,6 +4,76 @@
 > how it was checked, and what is still open. Anything that bends the brain
 > gets an ADR link, not a quiet edit.
 
+## 2026-10-21 (CI pass) — the chain runs, and the Postgres leg passes
+
+- **The CI chain was not broken by the code, and it was not a runner
+  problem either.** Three things were wrong, and each hid the next.
+
+- **The `actions/setup-node` pin was a mistyped commit.** The SHA had two
+  characters transposed (`4994 3ea...` for `4993 3ea...`), so the job
+  could not resolve the action it was pinned to and died while
+  downloading it. It is worth writing down *how* that looks, because it
+  is not what it looks like: a job that dies during setup records no
+  steps, so the run says `lint: failure` with an empty step list, which
+  reads like a lint error. It was not a lint error, and it was not the
+  "no runner" failure that four earlier runs had shown either - that one
+  was GitHub failing to allocate a runner at all, which stopped
+  happening on its own. All three pins are now verified against the tags
+  they claim.
+
+- **The Postgres leg had never passed, and could not have.** It failed
+  for a month on two real defects that only a real Postgres could show:
+
+  * `pos_005` converted three VARCHAR columns to timestamps and then
+    asked the database to change the column type, which Postgres refuses
+    to do implicitly. SQLite's batch mode recreates the table and
+    coerces the values in Python, so the local chain passed and the
+    Postgres one did not. The cast is now stated with
+    `postgresql_using`, in both directions.
+  * `alembic/env.py` let `DATABASE_SYNC_URL` override the URL the
+    *caller* had set, so the integration tests - which ask for a scratch
+    database - quietly migrated the main one and then asserted that the
+    scratch database had no tables in it. The explicit instruction now
+    wins; the environment variable is the operator's fallback, not an
+    override of the code that is asking.
+
+  With both fixed, the chain runs up, down and up again against
+  `postgres:16-alpine`, the seed runs against it, and the five Postgres
+  tests pass - the first time this leg has ever been green.
+
+- **The audit chain now carries its own order (ADR 0013, C20).** The
+  chain stored a sequence but no sequence number, and the verifier
+  re-derived the order from the rows with `ORDER BY created_at, id`,
+  where `id` is a random `uuid4().hex`. Two events that shared a
+  timestamp were therefore walked in a random order, and an intact chain
+  was reported as broken - the intermittent `test_full_mission_walk`
+  failure. The writer also linked events to a head it had read, with
+  nothing stopping two Postgres sessions from reading the same head and
+  forking the chain.
+
+  So the timestamps along a chain now strictly increase - the writer
+  nudges `created_at` forward a microsecond when the clock has not moved
+  on - the verifier walks the chain backwards from its head by
+  `prev_hash` instead of re-deriving the order from the rows, and
+  concurrent appends are serialised by a transaction-scoped Postgres
+  advisory lock keyed on the tenant. `tests/test_audit_chain.py` pins
+  what "intact" means: a linear chain verifies, and a tampered event, a
+  removed event, a fork and a shared timestamp are each caught - or, for
+  the timestamp, correctly not caught.
+
+- **The fixture corpus is finally platform-proof.** The drift check
+  failed on CI and passed everywhere else, because a zip entry records
+  the operating system that wrote it and the permission bits of the file
+  it came from, and both are in the archive's bytes. Both are now
+  pinned, and the corpus is the same 17 files on every platform -
+  verified by generating it inside a Linux container and comparing the
+  bytes.
+
+- **Where it stands:** the fast chain is green end to end (lint,
+  typecheck, unit, security-lint, dep-scan, secret-scan, web), the
+  Postgres leg is green, Dependabot has no open alerts, and the local
+  suite is 170 passed + 5 skipped at 68% coverage or better.
+
 ## 2026-10-21 (credential pass) — one credential, and a README for the public
 
 - **The developer-token authentication path is gone (ADR 0012, C21).**

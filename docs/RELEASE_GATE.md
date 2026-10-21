@@ -185,35 +185,19 @@ describes an intention ("wiring exists") is not a box at all.
 
 ## Still open (honest)
 
-- **The CI chain on `main` does not run (2026-10-21).** The last three
-  push runs fail in the first job, `lint`, with zero steps executed and
-  no log written, which is the signature of a job that never started. The
-  same command passes locally, and the three weekly scheduled runs before
-  them were green through `unit` and failed only at `integration`. The
-  cause is in the runner or the account's Actions allowance, not in this
-  repository, and it is not yet identified. Until it is, the claim that
-  "every push is gated" is a claim about the workflow file, not about an
-  observed green run. (`C18` in `bugs/04-infra-ci.md`.) (E2)
-- **The audit chain's order is reconstructed, not stored (2026-10-21).**
-  `verify_chain` re-derives the event order from
-  `ORDER BY created_at, id`, and `id` is a random UUID, so two events
-  sharing a timestamp can verify out of order and a chain that is intact
-  is reported as broken. It surfaces as an intermittent
-  `test_full_mission_walk` failure. The fix is a per-tenant sequence
-  number or an order-independent walk from the chain head; both change a
-  security-critical path and want their own ADR. (`C20` in
-  `bugs/01-backend.md`.) (E1 — the failure was observed here)
 - **A real IdP.** The OIDC path validates RS256 against a JWKS and
   fails closed, and the tests mint real tokens, but it has never been
   run against a live issuer. Staging item. (E2)
-- **Postgres in this environment.** The Postgres leg
-  (`tests/test_postgres.py`, 5 tests) is written and is exercised by the
-  weekly CI job against `postgres:16-alpine`, but the local PostgreSQL
-  installation on this machine is broken: its background workers abort
-  with `STATUS_DLL_INIT_FAILED` and take the cluster down with them, so
-  the leg could not be run locally. It has therefore been *written and
-  collected*, not *executed*, and this box says so rather than claiming
-  a pass it did not observe. (E2)
+- **The Postgres leg was never executed (2026-10-21, now closed).** The
+  leg (`tests/test_postgres.py`, 5 tests) had been written and collected
+  for a month and had never passed: the local PostgreSQL installation on
+  this machine is broken (its background workers abort with
+  `STATUS_DLL_INIT_FAILED`), and the CI leg failed on two real defects
+  that only a real Postgres could show - a cast Postgres refuses to make
+  implicitly, and an environment variable that overrode the database the
+  tests had asked for. Both are fixed, the leg was then run against a
+  `postgres:16-alpine` container, and it passes. (E1 — the failure was
+  observed here, and the pass was observed here too)
 - **A staging deployment.** The drills run against a scratch database
   and a local server. They have not been run against a deployed
   environment, because there is not one. (E2)

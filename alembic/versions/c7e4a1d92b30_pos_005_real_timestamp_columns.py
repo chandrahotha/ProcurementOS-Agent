@@ -110,6 +110,14 @@ def upgrade() -> None:
                 type_=sa.DateTime(timezone=True),
                 existing_type=sa.String(length=64),
                 existing_nullable=True,
+                # Postgres will not cast VARCHAR to TIMESTAMPTZ on its own
+                # ("cannot be cast automatically to type timestamp with
+                # time zone"), and the values are now ISO-8601 strings, so
+                # the cast is stated rather than assumed. SQLite has no
+                # USING clause and ignores this: its batch mode recreates
+                # the table and coerces the values in Python, which is why
+                # the local chain passed while the Postgres one did not.
+                postgresql_using=f'"{column}"::timestamptz',
             )
 
 
@@ -125,6 +133,9 @@ def downgrade() -> None:
                 type_=sa.String(length=64),
                 existing_type=sa.DateTime(timezone=True),
                 existing_nullable=True,
+                # The mirror of the upgrade: Postgres will not cast
+                # TIMESTAMPTZ back to VARCHAR implicitly either.
+                postgresql_using=f'"{column}"::text',
             )
     # The values are already strings in the app's ISO format once the
     # timestamp is rendered back out; re-writing them keeps the downgrade
@@ -139,8 +150,17 @@ def downgrade() -> None:
             sa.text(f'SELECT id, "{column}" FROM "{table}" WHERE "{column}" IS NOT NULL')  # noqa: S608
         ).fetchall()
         for row_id, raw in rows:
+            # On SQLite the column is still a datetime here; on Postgres the
+            # cast above has already turned it into text. Both are put back
+            # into the ISO form the application reads.
             if isinstance(raw, datetime):
-                bind.execute(
-                    sa.text(f'UPDATE "{table}" SET "{column}" = :value WHERE id = :id'),  # noqa: S608
-                    {"value": raw.isoformat(), "id": row_id},
-                )
+                text = raw.isoformat()
+            else:
+                parsed = _parse(raw)
+                if parsed is None:
+                    continue
+                text = parsed.isoformat()
+            bind.execute(
+                sa.text(f'UPDATE "{table}" SET "{column}" = :value WHERE id = :id'),  # noqa: S608
+                {"value": text, "id": row_id},
+            )
