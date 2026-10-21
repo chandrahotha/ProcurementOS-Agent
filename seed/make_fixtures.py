@@ -257,6 +257,15 @@ def _pdf_bytes(title: str, paragraphs: tuple[str, ...]) -> bytes:
 #: run and the "no drift" check meaningless.
 _ZIP_EPOCH = (2026, 1, 1, 0, 0, 0)
 
+#: The "version made by" byte of a zip entry records the operating system
+#: that wrote it: 0 for MS-DOS/Windows, 3 for Unix. Python's `zipfile`
+#: derives it from `sys.platform`, so the same workbook written on Windows
+#: and on Linux differs by a byte in every entry's central directory - and
+#: the drift check then fails on whichever platform did not write the
+#: committed file. It is pinned here so the corpus is the same bytes
+#: everywhere. 0 is the value the committed fixtures already carry.
+_ZIP_CREATE_SYSTEM = 0
+
 
 def _normalize_zip(data: bytes) -> bytes:
     """Rewrite a zip with fixed entry timestamps and fixed compression.
@@ -272,6 +281,7 @@ def _normalize_zip(data: bytes) -> bytes:
                 new = zipfile.ZipInfo(info.filename, date_time=_ZIP_EPOCH)
                 new.compress_type = zipfile.ZIP_DEFLATED
                 new.external_attr = info.external_attr
+                new.create_system = _ZIP_CREATE_SYSTEM
                 dst.writestr(new, src.read(info.filename))
     return buf.getvalue()
 
@@ -298,6 +308,7 @@ def _pin_xlsx_modified(data: bytes) -> bytes:
                 new = zipfile.ZipInfo(info.filename, date_time=_ZIP_EPOCH)
                 new.compress_type = zipfile.ZIP_DEFLATED
                 new.external_attr = info.external_attr
+                new.create_system = _ZIP_CREATE_SYSTEM
                 dst.writestr(new, content)
     return buf.getvalue()
 
