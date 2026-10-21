@@ -137,3 +137,20 @@ proved.
   that could never match an approved hash, so the Execute button was
   permanently disabled. The approved payload now travels from the
   approval row to the action panel.
+- [ ] **C20** The audit chain stores a sequence but no sequence number.
+  The writer links each event to the previous event's hash, and
+  `verify_chain` reconstructs the order with
+  `ORDER BY created_at, id` — where `id` is `uuid4().hex`, a random
+  value, not a monotonic one. Two events that share a `created_at` are
+  therefore walked in random order, and the verifier reports a break in
+  a chain that is intact. It shows as an intermittent failure of
+  `tests/test_api.py::test_full_mission_walk` and
+  `tests/test_gates_and_tools.py::test_a_conflict_is_recorded_in_the_audit_trail`
+  in the full suite; both pass in isolation, and the failure rate rises
+  with the number of events written in the same millisecond. Still open,
+  and recorded rather than patched here because it changes the semantics
+  of a security-critical verification. Two candidate fixes: a per-tenant
+  sequence number (a `pos_007` migration, and an order the verifier can
+  trust), or an order-independent verification that walks the chain from
+  its head by `prev_hash` instead of re-deriving the order from the
+  timestamps. Either way it wants its own ADR and its own tests.

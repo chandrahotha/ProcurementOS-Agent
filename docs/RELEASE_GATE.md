@@ -41,6 +41,15 @@ describes an intention ("wiring exists") is not a box at all.
       clean (89 files); `pytest` 162 passed + 5 skipped, with no warnings
       (the skips are the Postgres leg, which the weekly job runs); `tsc`
       clean; `next build` green; `vitest` green; Playwright green.
+      Re-verified on 2026-10-21 by executing the whole chain on the tree:
+      every command above is green, the coverage floor holds at 68.08%
+      against 68%, and every drill passes. Two caveats are recorded
+      rather than hidden — the CI chain on `main` currently fails in its
+      first job with no steps executed and no log written, which is a
+      runner or account problem rather than a code failure (`C18`), and
+      one audit test is intermittent because the chain's event order is
+      reconstructed from a random UUID (`C20`). Both are open in
+      `bugs/FINDINGS.md`.
 - [x] Every push and pull request is gated (2026-10-20) — the CI fast
       chain runs on `push` and `pull_request`; the heavy legs (Postgres
       migration + seed + PG tests, container builds, Playwright) stay on
@@ -84,7 +93,12 @@ describes an intention ("wiring exists") is not a box at all.
       The Python tree is audited from `requirements.lock` rather than from
       the ambient environment, so the answer is reproducible: the lockfile
       is exactly what CI installs. `pip-audit --strict --requirement
-      requirements.lock` reports no known vulnerabilities.
+      requirements.lock` reports no known vulnerabilities. The count above
+      was the claim; the gate reported three *unaccepted* advisories
+      until 2026-10-21, when `vite@8.3.1` (inside the vulnerable range
+      `>=8.3.0, <=8.3.2` of three `launch-editor` advisories) was moved to
+      `8.3.5` and the development tree returned to one accepted
+      advisory, the one described above.
 - [x] Upload-abuse suite (2026-09-25) — `tests/test_ingest.py`
       (POS-SEC-02: extension/MIME/magic-byte/oversize/macro rejects);
       full-archive macro scan for OOXML + 25 MB cap during read + filename
@@ -171,6 +185,24 @@ describes an intention ("wiring exists") is not a box at all.
 
 ## Still open (honest)
 
+- **The CI chain on `main` does not run (2026-10-21).** The last three
+  push runs fail in the first job, `lint`, with zero steps executed and
+  no log written, which is the signature of a job that never started. The
+  same command passes locally, and the three weekly scheduled runs before
+  them were green through `unit` and failed only at `integration`. The
+  cause is in the runner or the account's Actions allowance, not in this
+  repository, and it is not yet identified. Until it is, the claim that
+  "every push is gated" is a claim about the workflow file, not about an
+  observed green run. (`C18` in `bugs/04-infra-ci.md`.) (E2)
+- **The audit chain's order is reconstructed, not stored (2026-10-21).**
+  `verify_chain` re-derives the event order from
+  `ORDER BY created_at, id`, and `id` is a random UUID, so two events
+  sharing a timestamp can verify out of order and a chain that is intact
+  is reported as broken. It surfaces as an intermittent
+  `test_full_mission_walk` failure. The fix is a per-tenant sequence
+  number or an order-independent walk from the chain head; both change a
+  security-critical path and want their own ADR. (`C20` in
+  `bugs/01-backend.md`.) (E1 — the failure was observed here)
 - **A real IdP.** The OIDC path validates RS256 against a JWKS and
   fails closed, and the tests mint real tokens, but it has never been
   run against a live issuer. Staging item. (E2)

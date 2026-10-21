@@ -1,0 +1,23 @@
+# Line endings, made deterministic.
+#
+# Everything that is text is checked out with LF on every platform and
+# stored as LF in the repository. Without this, a Windows checkout with
+# `core.autocrlf=true` rewrites every LF as CRLF, and the working tree
+# stops being byte-identical to the commit.
+* text=auto eol=lf
+
+# The byte-exact artefacts, and the reason this file exists at all.
+#
+# `seed/make_fixtures.py --check` compares the committed corpus against
+# the generator byte for byte, and git's CRLF conversion used to rewrite
+# the fixtures on checkout: a reportlab PDF contains no NUL byte, so git
+# classified it as text and turned every LF in it into CRLF. The
+# committed PDF was 2409 bytes and the checked-out PDF was 2497, and the
+# drift check could never pass on a Windows clone.
+#
+# `binary` is `-text -diff`: git neither converts the line endings nor
+# treats it as text. These files must survive a checkout untouched.
+*.pdf   binary
+*.xlsx  binary
+*.docm  binary
+*.png   binary

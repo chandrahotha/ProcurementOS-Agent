@@ -44,6 +44,12 @@ dev = [
   "ruff>=0.17,<0.18",
   "mypy>=2.4,<3",
   "pip-audit>=2.9,<3",
+  # openpyxl serialises through lxml when it is importable and through the
+  # stdlib ElementTree when it is not, and the two write different bytes for
+  # the same workbook (namespace placement, `<tag/>` vs `<tag />`). The
+  # committed price-history.xlsx was generated with lxml, so without it
+  # `seed/make_fixtures.py --check` reports drift on a clean CI install.
+  "lxml>=6,<7",
 ]
 
 [tool.pytest.ini_options]

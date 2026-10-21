@@ -4,6 +4,77 @@
 > how it was checked, and what is still open. Anything that bends the brain
 > gets an ADR link, not a quiet edit.
 
+## 2026-10-21 (verification pass) — the gate chain, executed
+
+- **The fast gate chain was run end to end against the tree on Windows,
+  and it found four things that the previous entry's claims did not
+  cover.** This is the pass the previous entries describe as "the current
+  check before every push"; it was run rather than assumed, and the
+  difference mattered.
+
+- **The CI chain on `main` is red, and not because of the code (C18).**
+  The last three push runs (`5ac0867`, `e99a287`, `1bf0aa4`) all fail in
+  the *first* job, `lint`, with zero steps executed and no log written —
+  the signature of a job that never started rather than of a lint error.
+  The same command passes here, and the three weekly scheduled runs
+  before them were green through `unit` and failed only at `integration`,
+  the Postgres leg. The run records show the shape of the failure; the
+  logs were never produced, so the cause is not identified yet.
+
+- **The dependency gate would have failed on a clean CI install (C15,
+  C16).** `vite@8.3.1` is inside the vulnerable range of three
+  `launch-editor` advisories, and `scripts/npm_audit.py` treats an
+  unaccepted advisory in the development tree as a blocker: vite is now
+  `^8.3.5`, and the gate reports zero unaccepted findings. Separately,
+  `lxml` was missing from `requirements.lock`; openpyxl serialises
+  through lxml when it is importable and through the stdlib ElementTree
+  when it is not, and the two write different bytes for the same
+  workbook, so `seed/make_fixtures.py --check` reported drift on the
+  committed `price-history.xlsx`. `lxml>=6,<7` is now a declared dev
+  dependency and is pinned.
+
+- **The repository had no `.gitattributes` (C17).** On a Windows
+  checkout with `core.autocrlf=true`, git classified the byte-exact
+  corpus as text — a reportlab PDF contains no NUL byte — and converted
+  every LF into CRLF. The committed `quote-syn-sup-01.pdf` is 2409 bytes;
+  the checked-out file was 2497. The fixture drift check could never
+  pass on a Windows clone, and a contributor on Windows would have been
+  told the generator was wrong. `.gitattributes` now marks `*.pdf`,
+  `*.xlsx`, `*.docm` and `*.png` as `binary` and checks everything else
+  out as LF.
+
+- **The audit chain has a sequence but no sequence number (C20).**
+  `verify_chain` reconstructs the event order with
+  `ORDER BY created_at, id`, and `id` is `uuid4().hex` — random, not
+  monotonic. Two events sharing a `created_at` are walked in random
+  order, and the verifier reports a break in a chain that is intact. It
+  shows as an intermittent `test_full_mission_walk` failure. Recorded,
+  not patched: the fix changes a security-critical verification and wants
+  its own ADR and tests. The candidate is a per-tenant sequence number
+  (`pos_007`), or a verification that walks the chain from its head by
+  `prev_hash` instead of re-deriving the order.
+
+- **A note on the lock, because the discipline paid for itself.** The
+  first attempt at the lxml fix regenerated `requirements.lock` from a
+  fresh resolution, which pulled `httpx2` 2.15.1 -> 2.16.0 with it. That
+  version changes the HTTP test client's timing enough to make the
+  audit race in C20 fire. The lock was reverted and only the `lxml` pin
+  was added: a lock is a record of what was tested, not a request for
+  the newest of everything.
+
+- **Verified here, on the tree as committed:** `ruff check` and
+  `ruff format --check` clean over `app worker engine seed tests alembic
+  scripts`; `ruff check --select S` clean; `mypy --strict` clean over 89
+  source files; `scripts/lock.py --check` current at 93 pins;
+  `pytest -m "not integration"` 162 passed + 5 skipped, coverage 68.08%
+  against a 68% floor; `scripts/rollback.py` (upgrade, downgrade, upgrade
+  again, 2.30s against a 30-minute RTO budget); `scripts/ssrf_drill.py`
+  against a live host; `scripts/verify_env.py --check-templates`;
+  `scripts/check_encoding.py` (235 text files); `seed/make_fixtures.py
+  --check` (17 files); `pip-audit --strict` clean; `scripts/npm_audit.py`
+  clean apart from the one reviewed `braces` exception; `npm run lint`,
+  `npm run typecheck`, `npm run build` and `npm run test` green.
+
 ## 2026-10-20 (second wave) — Research context, INR corpus, and the plan phase made to execute
 
 - **The research context is now explicit** (ADR 0011). The reporting

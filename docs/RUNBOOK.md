@@ -21,6 +21,24 @@ npx --prefix web playwright install chromium --only-shell
 npm run e2e --prefix web      # boots API + web, seeds SYNTHETIC data, walks W1->W8
 ```
 
+Two notes before you go, both learned the hard way on Windows.
+
+**The fixtures are byte-exact.** `seed/make_fixtures.py --check` compares
+the committed corpus against its generator byte for byte, and a
+reportlab PDF contains no NUL byte, so a line-ending conversion silently
+changes it. `.gitattributes` now marks `*.pdf`, `*.xlsx`, `*.docm` and
+`*.png` as `binary` and checks everything else out as LF, so a fresh
+clone matches the generator on any platform. If you ever see that check
+fail with a size difference of exactly the number of lines in the file,
+you have a CRLF conversion somewhere — check `git config core.autocrlf`
+is not `true` in this repository.
+
+**Install from the lock, not from the ranges.** `pip install -r
+requirements.lock` is what CI installs, and it is the only way to know
+the versions the tests were run against. `pip install -e ".[dev]"` is
+equivalent for a quick start, because the dev extra now includes
+everything the lock pins.
+
 To browse it rather than test it, seed the database and start the two
 processes:
 

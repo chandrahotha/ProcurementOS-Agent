@@ -92,3 +92,37 @@ Status: `[ ]` open · `[x]` fixed · `[~]` deferred with ADR.
 - [x] **C14** The release gate's monitoring box claimed OpenTelemetry
   wiring that did not exist. → `app/core/observe.py` +
   `/api/v1/ops/metrics` + `scripts/task_age.py`. ADR 0010.
+- [x] **C15** The dependency gate failed on its own terms: `vite@8.3.1`
+  is inside the vulnerable range of three `launch-editor` advisories
+  (GHSA-698v-4r3x-3vcv, GHSA-r825-w8mm-5pxw, GHSA-587h-7wmj-h5pm), and
+  `scripts/npm_audit.py` treats an unaccepted advisory in the development
+  tree as a blocker. The range for `vite` is `>=8.3.0, <=8.3.2`, so
+  `8.3.5` is outside every listed one. -> vite is `^8.3.5` and the gate
+  reports zero unaccepted findings; the one reviewed exception
+  (`braces`, no patched release) is unchanged.
+- [x] **C16** `lxml` was not in `requirements.lock`, but openpyxl
+  serialises through lxml when it is importable and through the stdlib
+  ElementTree when it is not, and the two write different bytes for the
+  same workbook (namespace placement, `<tag/>` against `<tag />`). The
+  committed `price-history.xlsx` was generated with lxml, so
+  `seed/make_fixtures.py --check` reported drift on a clean CI install.
+  -> `lxml>=6,<7` is a declared dev dependency and is pinned; the
+  fixtures are now byte-identical with and without the local install.
+- [x] **C17** The repository had no `.gitattributes`, so a Windows
+  checkout with `core.autocrlf=true` rewrote the byte-exact corpus: a
+  reportlab PDF contains no NUL byte, so git classified it as text and
+  converted every LF into CRLF. The committed `quote-syn-sup-01.pdf` is
+  2409 bytes and the checked-out file was 2497, so the drift check could
+  never pass on a Windows clone. -> `.gitattributes` marks `*.pdf`,
+  `*.xlsx`, `*.docm` and `*.png` as `binary` and checks everything else
+  out as LF.
+- [ ] **C18** The CI chain on `main` is red, and not because of the code:
+  the last three push runs (`5ac0867`, `e99a287`, `1bf0aa4`) all fail in
+  the *first* job, `lint`, with zero steps executed and no log written,
+  which is the signature of a job that never started rather than of a
+  lint error (the same command passes locally, and the three weekly
+  scheduled runs before that were green through `unit`). Still open: the
+  run records show the shape of the failure but the job logs were never
+  produced, so the cause is not identified. Next: check the runner
+  availability and the account's Actions allowance, then re-run with
+  `workflow_dispatch` so a log exists.
