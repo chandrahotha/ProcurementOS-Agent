@@ -266,6 +266,16 @@ _ZIP_EPOCH = (2026, 1, 1, 0, 0, 0)
 #: everywhere. 0 is the value the committed fixtures already carry.
 _ZIP_CREATE_SYSTEM = 0
 
+#: The permission bits a zip entry records. Python's `writestr` uses 0o600,
+#: but an entry that came from a real file carries that file's mode, and a
+#: mode depends on the platform and on the umask - so the same workbook
+#: written on two Linux machines, or on Linux and on Windows, differs in
+#: the bytes of that entry. openpyxl writes the worksheet through a
+#: temporary file, which is how one entry ended up with mode 0664 while
+#: its neighbours had 0600. Pinned here, to the value `writestr` uses, so
+#: the corpus is the same bytes everywhere.
+_ZIP_EXTERNAL_ATTR = 0o600 << 16
+
 
 def _normalize_zip(data: bytes) -> bytes:
     """Rewrite a zip with fixed entry timestamps and fixed compression.
@@ -280,7 +290,7 @@ def _normalize_zip(data: bytes) -> bytes:
             for info in src.infolist():
                 new = zipfile.ZipInfo(info.filename, date_time=_ZIP_EPOCH)
                 new.compress_type = zipfile.ZIP_DEFLATED
-                new.external_attr = info.external_attr
+                new.external_attr = _ZIP_EXTERNAL_ATTR
                 new.create_system = _ZIP_CREATE_SYSTEM
                 dst.writestr(new, src.read(info.filename))
     return buf.getvalue()
@@ -307,7 +317,7 @@ def _pin_xlsx_modified(data: bytes) -> bytes:
                     )
                 new = zipfile.ZipInfo(info.filename, date_time=_ZIP_EPOCH)
                 new.compress_type = zipfile.ZIP_DEFLATED
-                new.external_attr = info.external_attr
+                new.external_attr = _ZIP_EXTERNAL_ATTR
                 new.create_system = _ZIP_CREATE_SYSTEM
                 dst.writestr(new, content)
     return buf.getvalue()
