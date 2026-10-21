@@ -62,9 +62,12 @@ python scripts/api_inventory.py
 
 `/cases/*` mirrors `/missions/*` with the same handlers.
 
-Auth: prod requires OIDC (`OIDC_ISSUER`/`OIDC_AUDIENCE`) — the app
-refuses to boot in production without both; the dev-token fallback is
-dev/test only (tokens stored hashed). Write methods are rate limited on
+Auth: an email and a password are exchanged for a session token at
+`POST /api/v1/auth/login`; the token is random, stored hashed, expiry-bound
+and revocable, and it is the only bearer credential the API accepts. Prod
+requires OIDC (`OIDC_ISSUER`/`OIDC_AUDIENCE`) — the app refuses to boot in
+production without both, and with an issuer configured an OIDC JWT is the
+only thing that authenticates. Write methods are rate limited on
 two counters: 120/min per authenticated principal and 600/min per client
 address, so one noisy user behind a shared address cannot throttle a
 tenant (429 with the error envelope). `X-Forwarded-For` is honoured only

@@ -1,13 +1,13 @@
-// P01 Mission Control, wired: token box + live mission table + KPI summary.
-// The connect form also renders after 401/403 so a bad token can be
-// replaced from the UI (F15).
+// P01 Mission Control, wired: the live mission table + KPI summary.
+// When there is no session (or the session has expired) the screen asks
+// you to sign in rather than offering a token box (F15).
 "use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Screen, ExceptionBanner } from "@/components/Screen";
 import { ApiError, api, stateForError, type Mission } from "@/lib/api-client";
-import { readToken, saveToken } from "@/lib/token";
+import { readToken } from "@/lib/token";
 import { Card, Progress, StatCard, StateBadge } from "@/components/ui";
 
 export default function MissionControl() {
@@ -44,29 +44,17 @@ export default function MissionControl() {
     return () => { cancelled = true; };
   }, [token]);
 
-  function connect(t: string) {
-    saveToken(t);
-    setToken(t);
-  }
-
   const connectCard = (
     <Card className="max-w-lg">
-      <form onSubmit={(e) => {
-        e.preventDefault();
-        const v = (e.currentTarget.elements.namedItem("tok") as HTMLInputElement).value;
-        connect(v.trim());
-      }}>
-        <label>API token
-          <input name="tok" defaultValue={token} placeholder="tok-…" />
-        </label>
-        <p className="mt-2 text-xs text-text-2">
-          Dev tokens are a dev/test fallback (e.g. <span className="mono">dev-amara.buyer1@syn.example</span>);
-          production uses OIDC. Roles map by persona.
+      <div className="grid gap-3">
+        <p className="text-sm text-text-2">
+          You are not signed in, or your session has expired. Sign in with
+          your email and password to see the missions you belong to.
         </p>
-        <div className="row mt-3">
-          <button type="submit" className="primary">Connect</button>
+        <div className="row">
+          <Link href="/login" className="primary">Sign in</Link>
         </div>
-      </form>
+      </div>
     </Card>
   );
 

@@ -1,21 +1,22 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // Full mission walk W1 -> W8 through the real UI, against the seeded
-// synthetic API. Role switches use the dev tokens from the seed; the
-// server enforces every gate regardless of what the UI shows.
+// synthetic API. Role switches sign in again with that persona's
+// credentials, the way a person with two roles would; the server enforces
+// every gate regardless of what the UI shows.
 // Status notes are matched with hasText filters so multiple live
 // regions never trip Playwright's strict mode.
 
 const BUYER = "amara.buyer1@syn.example";
 const MANAGER = "daniel.manager@syn.example";
+const DEMO_PASSWORD = "syn-Demo-2026!";
 
 async function connect(page: Page, email: string) {
-  await page.goto("/agent");
-  await page.evaluate(
-    (t) => localStorage.setItem("pos_token", t),
-    `dev-${email}`,
-  );
-  await page.reload();
+  await page.goto("/login");
+  await page.fill('input[name="email"]', email);
+  await page.fill('input[name="password"]', DEMO_PASSWORD);
+  await page.click('button[type="submit"]');
+  await page.waitForURL(/\/agent/);
 }
 
 async function see(page: Page, text: string) {

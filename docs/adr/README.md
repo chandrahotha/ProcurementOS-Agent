@@ -19,6 +19,7 @@ Brain refs / Rollback.
 | [0009](0009-egress-policy.md) | Egress is a policy, not a config value | accepted |
 | [0010](0010-observability-and-global-counters.md) | Observability, and the two global counters | accepted |
 | [0011](0011-thesis-context-inr-and-evidence-classes.md) | Thesis context: INR, evidence classes, implemented/proposed boundary | accepted |
+| [0012](0012-one-credential-email-and-password.md) | One credential: an email and a password, and nothing else | accepted |
 
 ## Reading order for a reader new to the repository
 

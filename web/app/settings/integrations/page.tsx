@@ -9,7 +9,7 @@ import { Icon } from "@/components/icons";
 const INTEGRATIONS = [
   {
     name: "OIDC Identity",
-    desc: "RS256/JWKS validation; dev-token fallback fenced off",
+    desc: "RS256/JWKS validation; email-and-password sessions otherwise",
     icon: "lock" as const,
     status: "wired",
   },

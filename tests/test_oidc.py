@@ -74,13 +74,10 @@ async def _seed(sub):
         await conn.run_sync(Base.metadata.create_all)
     mk = async_sessionmaker(engine, expire_on_commit=False)
     async with mk() as s:
-        # `tok-op` is a synthetic token for an in-memory test database; it
-        # authenticates nobody and exists only to give the row a handle.
         u = User(
             tenant_id="t1",
             email="op@x.io",
             name="Op",
-            api_token="tok-op",  # noqa: S106 - synthetic test value
             oidc_sub=sub,
         )
         s.add(u)
@@ -130,9 +127,15 @@ async def test_expired_wrongaud_unknownkid_badsig_rejected(fake_idp, keys):
             assert ei.value.status_code == 401
 
 
-async def test_dev_fallback_dead_when_oidc_configured(fake_idp):
+async def test_a_bare_token_is_not_a_credential(fake_idp):
+    """With OIDC configured, only an OIDC token authenticates.
+
+    There is no second credential to fall back on: a session token minted
+    by the login endpoint is not accepted while an issuer is configured,
+    and an arbitrary string is not a credential either.
+    """
     mk, _ = await _seed("sub-1")
     async with mk() as s:
         with pytest.raises(HTTPException) as ei:
-            await get_principal("Bearer tok-op", s)
+            await get_principal("Bearer not-a-real-token", s)
         assert ei.value.status_code == 401

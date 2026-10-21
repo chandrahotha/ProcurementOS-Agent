@@ -4,6 +4,64 @@
 > how it was checked, and what is still open. Anything that bends the brain
 > gets an ADR link, not a quiet edit.
 
+## 2026-10-21 (credential pass) — one credential, and a README for the public
+
+- **The developer-token authentication path is gone (ADR 0012, C21).**
+  There were two ways to authenticate a request. One was OIDC. The other was
+  a `Bearer <token>` matched against the digest in `pos_user.api_token`,
+  where the seeded value was `sha256("dev-" + email)`. It was fenced — it
+  was unreachable the moment an issuer was configured, and the app refuses
+  to boot in production without one — and it was hashed at rest. But it was
+  still a credential that anybody who had read the seed could compute for
+  themselves, because it was a function of an email address and a fixed
+  string. It was also redundant: the credential login had landed, and it is
+  stronger.
+
+  So there is one credential now. `app/auth/deps.py` authenticates a
+  request either by an OIDC JWT or by a session token minted at
+  `POST /api/v1/auth/login` from an email and a password. The
+  `pos_user.api_token` column is dropped by migration `pos_007` — a column
+  that looks like a credential store and is not one is worse than no column
+  — and the migration is reversible, because the downgrade re-adds it. The
+  web app signs in with an email and a password: the token box on Mission
+  Control and the token form on the login screen are gone, and the login
+  screen offers the seeded personas as a one-click shortcut that fills the
+  demo password in. The seed writes a password hash and nothing else.
+
+  The tests changed with it, and that is the point: the harness now signs
+  in through the login endpoint, so the suite exercises the credential path
+  a person actually takes instead of a second authentication mode that only
+  the tests used. 162 passed, 5 skipped, unchanged.
+
+- **The README was rewritten for a public reader.** It was a producer's
+  document: the findings ledger's counts, the audit's history, the evidence
+  classes, the slice-by-slice roadmap with its internal issue identifiers,
+  and the ADRs that explain decisions the reader had not asked about yet.
+  That is the wrong register for a repository's front door. It is now a
+  product README: what the agent does, how to run it, how to sign in, the
+  stack, the layout, the security model, and the commands. The internal
+  documents are still there and still linked — a reader who wants the
+  evidence trail can follow the links; a reader who wants to run the thing
+  does not have to read the postmortems first.
+
+- **A mypy resolution fix.** `seed/` and `scripts/` are namespace
+  directories, not packages. With the credential change, `seed_pos` was
+  imported as `seed.seed_pos` from one file and as `seed_pos` from another,
+  and mypy refused to check a file it believed it had seen twice.
+  `explicit_package_bases = true` makes mypy resolve module names the way
+  Python resolves them at runtime. 89 source files, strict, clean.
+
+- **A best-effort path that was not best-effort (C22).** `put_object`
+  called boto3 with its defaults — a 60-second read timeout and three
+  retries — and the default `S3_ENDPOINT` points at a store that is not
+  running locally. Every document upload therefore blocked for three
+  seconds before falling through to the `except` branch that was always
+  going to catch it. The client now carries a one-second connect timeout,
+  a five-second read timeout and no retries: a missing object store costs
+  a second instead of three, and the upload is not held open waiting for
+  it. This was found by profiling, not by reading, which is the argument
+  for profiling the slow path once in a while.
+
 ## 2026-10-21 (verification pass) — the gate chain, executed
 
 - **The fast gate chain was run end to end against the tree on Windows,

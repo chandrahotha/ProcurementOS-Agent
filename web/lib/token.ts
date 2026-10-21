@@ -1,6 +1,7 @@
-// Demo token storage. Production replaces this with the OIDC session;
-// the API already enforces membership server-side, so a pasted dev token
-// can never reach across tenants.
+// Session token storage. The token is minted by POST /auth/login from an
+// email and a password; production replaces this with the OIDC session.
+// The API enforces membership server-side, so a token can never reach
+// across tenants.
 "use client";
 
 const KEY = "pos_token";

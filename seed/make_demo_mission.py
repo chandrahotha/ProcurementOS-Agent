@@ -42,12 +42,32 @@ MANAGER = "daniel.manager@syn.example"
 FINANCE = "fatima.finance@syn.example"
 
 
-def _token(email: str) -> str:
-    return f"dev-{email}"
+#: Session tokens minted by POST /api/v1/auth/login, one per persona.
+_SESSIONS: dict[str, str] = {}
 
 
-def _headers(email: str, key: str | None = None) -> dict[str, str]:
-    h = {"Authorization": f"Bearer {_token(email)}"}
+def _headers(client: Any, email: str, key: str | None = None) -> dict[str, str]:
+    """The bearer header for a persona, logging in the first time it is needed.
+
+    The demo data is created by exactly the path a user takes: an email and
+    a password, exchanged for a session token. There is no other credential.
+    """
+    token = _SESSIONS.get(email)
+    if token is None:
+        # Imported here, not at module scope: the repository root only joins
+        # sys.path in main(), so a top-level import would fail when this
+        # file is run as a script.
+        from seed.seed_pos import SYN_DEMO_PASSWORD
+
+        r = client.post(
+            "/api/v1/auth/login",
+            json={"email": email, "password": SYN_DEMO_PASSWORD},
+        )
+        if r.status_code >= 400:
+            raise SystemExit(f"login {email} -> {r.status_code}: {r.text[:300]}")
+        token = str(r.json()["data"]["token"])
+        _SESSIONS[email] = token
+    h = {"Authorization": f"Bearer {token}"}
     if key:
         h["Idempotency-Key"] = key
     return h
@@ -173,14 +193,16 @@ TRANSACTIONS = [
 
 
 def _post(client: Any, path: str, email: str, body: Any = None, key: str | None = None) -> Any:
-    r = client.post(path, headers=_headers(email, key), json=body if body is not None else {})
+    r = client.post(
+        path, headers=_headers(client, email, key), json=body if body is not None else {}
+    )
     if r.status_code >= 400:
         raise SystemExit(f"POST {path} -> {r.status_code}: {r.text[:300]}")
     return r.json()["data"]
 
 
 def _get(client: Any, path: str, email: str) -> Any:
-    r = client.get(path, headers=_headers(email))
+    r = client.get(path, headers=_headers(client, email))
     if r.status_code >= 400:
         raise SystemExit(f"GET {path} -> {r.status_code}: {r.text[:300]}")
     return r.json()["data"]
@@ -191,7 +213,7 @@ def _upload(client: Any, mission_id: str, filename: str) -> str:
     content = path.read_bytes()
     r = client.post(
         f"/api/v1/missions/{mission_id}/documents",
-        headers=_headers(BUYER),
+        headers=_headers(client, BUYER),
         files={"file": (filename, content, "application/pdf")},
     )
     if r.status_code >= 400:

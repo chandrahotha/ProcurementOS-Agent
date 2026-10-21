@@ -154,3 +154,21 @@ proved.
   trust), or an order-independent verification that walks the chain from
   its head by `prev_hash` instead of re-deriving the order from the
   timestamps. Either way it wants its own ADR and its own tests.
+- [x] **C21** There were two ways to authenticate a request, and the
+  weaker one did not need a secret: with no OIDC issuer configured, any
+  `Bearer <token>` was matched against the digest in `pos_user.api_token`,
+  and the seeded value was `sha256("dev-" + email)`. It was fenced and
+  hashed, but it was still a credential that anybody who had read the seed
+  could compute for themselves. By the time the credential login landed it
+  was also redundant. -> the developer-token path is removed, the
+  `pos_user.api_token` column is dropped (migration `pos_007`), the web app
+  signs in with an email and a password, and the tests sign in through the
+  login endpoint so the suite exercises the path a person takes. ADR 0012.
+- [x] **C22** `put_object` called boto3 with its default timeouts — a
+  60-second read timeout and three retries — on a path that is explicitly
+  best-effort. With the default `S3_ENDPOINT` pointing at a store that is
+  not running, every document upload blocked for three seconds before
+  falling through to the `except` branch. -> the client is built with a
+  one-second connect timeout, a five-second read timeout and no retries,
+  so a missing object store costs a second instead of three and the
+  upload itself is not held open.

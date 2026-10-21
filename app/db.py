@@ -1,4 +1,4 @@
-"""Async engine/session. Postgres in prod; SQLite+aiosqlite in tests/dev-fallback."""
+"""Async engine/session. Postgres in prod; SQLite+aiosqlite locally and in tests."""
 
 from __future__ import annotations
 

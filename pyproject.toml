@@ -67,11 +67,13 @@ select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
 [tool.ruff.lint.per-file-ignores]
 # S101 (assert) is fine in tests. S106 is NOT blanket-exempted: a hardcoded
 # credential in a test fixture is exactly what the rule is for (I25), so the
-# exemption is scoped to the one synthetic-credential file below.
+# exemption is scoped to the two files below, which hold the one synthetic
+# demo credential.
 "tests/**/*.py" = ["S101"]
 "engine/tests/**/*.py" = ["S101"]
 # Synthetic demo credential only (the seed refuses non-synthetic DBs).
 "seed/seed_pos.py" = ["S105", "S106"]
+"tests/harness.py" = ["S105"]
 "app/auth/deps.py" = ["B008"]
 "app/api/*.py" = ["B008"]
 "app/main.py" = ["B008"]
@@ -83,6 +85,13 @@ python_version = "3.12"
 strict = true
 warn_unused_ignores = true
 plugins = ["pydantic.mypy"]
+# `seed/` and `scripts/` are namespace directories, not packages. Without
+# this, mypy names `seed/seed_pos.py` "seed_pos" while an import of
+# `seed.seed_pos` names the same file "seed.seed_pos", and it refuses to
+# check a file it thinks it has seen twice. Explicit package bases make mypy
+# resolve module names the way Python does at runtime.
+explicit_package_bases = true
+mypy_path = "."
 
 [[tool.mypy.overrides]]
 module = ["openpyxl.*", "reportlab.*", "boto3.*", "botocore.*"]

@@ -1,21 +1,24 @@
 """Auth dependencies.
 
-Prod: OIDC Bearer JWT (validated against OIDC_ISSUER/AUDIENCE). The dev-token
-fallback is a dev/test convenience ONLY: it is unreachable whenever
-OIDC_ISSUER is configured, and the app refuses to boot in production without
-one (bugs/01-backend.md B21).
+There are exactly two ways in, and no third:
 
-Dev fallback: `Bearer <token>` / `Test <token>` matched against the SHA-256
-digest of pos_user.api_token — tokens are never stored or compared in
-plaintext (B22) — with roles derived from workspace membership, never from
-the email prefix (B23).
+* **OIDC** (production). A Bearer JWT validated against
+  `OIDC_ISSUER`/`OIDC_AUDIENCE` and resolved to a user by `oidc_sub`.
+* **A session** (everywhere else). A bearer token minted by
+  `POST /api/v1/auth/login` from an email and a password. The token is
+  random, stored hashed, expiry-bound and revocable.
+
+There is no developer token, no email-derived token, and no way to
+authenticate without a credential that was issued to somebody who
+proved they hold one. The app refuses to boot in production without an
+OIDC issuer (bugs/01-backend.md B21).
+
+Roles come from workspace membership, never from the email (B23).
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -40,38 +43,11 @@ class Principal:
     roles: list[str]
 
 
-def token_digest(token: str) -> str:
-    """SHA-256 of the presented token: at rest only digests are stored."""
-    return hashlib.sha256(token.strip().encode()).hexdigest()
-
-
 # Per-process TTL cache for membership roles (B41): the workspace scan would
 # otherwise run on every authenticated request. Role changes reflect within
 # the TTL window; lane-critical paths re-check via require_roles/decide.
 _ROLES_TTL_S = 30.0
 _roles_cache: dict[tuple[str, str], tuple[float, list[str]]] = {}
-
-
-async def _dev_principal(authorization: str, session: AsyncSession) -> Principal | None:
-    if settings.oidc_issuer:
-        return None
-    scheme, _, token = authorization.partition(" ")
-    if scheme not in ("Bearer", "Test") or not token:
-        return None
-    digest = token_digest(token)
-    q = await session.execute(select(User).where(User.api_token == digest))
-    user = q.scalar_one_or_none()
-    if user is None:
-        return None
-    # Timing-safe compare on the stored digest (belt-and-braces).
-    if not hmac.compare_digest(user.api_token or "", digest):
-        return None
-    return Principal(
-        user_id=user.id,
-        tenant_id=user.tenant_id,
-        email=user.email,
-        roles=await _membership_roles(session, user),
-    )
 
 
 async def _membership_roles(session: AsyncSession, user: User) -> list[str]:
@@ -127,23 +103,20 @@ async def get_principal(
         return await _oidc_principal(authorization, session)
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing credentials")
-    # Real sessions first: a bearer token from POST /auth/login resolves to a
-    # live, unexpired, unrevoked session (B-auth).
     scheme, _, token = authorization.partition(" ")
-    if scheme == "Bearer" and token:
-        found = await principal_from_session(session, token.strip())
-        if found is not None:
-            u, _ = found
-            return Principal(
-                user_id=u.id,
-                tenant_id=u.tenant_id,
-                email=u.email,
-                roles=await _membership_roles(session, u),
-            )
-    principal = await _dev_principal(authorization, session)
-    if principal is None:
+    if scheme != "Bearer" or not token:
+        raise HTTPException(status_code=401, detail="Missing credentials")
+    # A session token from POST /auth/login: live, unexpired, unrevoked.
+    found = await principal_from_session(session, token.strip())
+    if found is None:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    return principal
+    user, _row = found
+    return Principal(
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        email=user.email,
+        roles=await _membership_roles(session, user),
+    )
 
 
 def require_roles(*allowed: str) -> Callable[[Principal], Awaitable[Principal]]:

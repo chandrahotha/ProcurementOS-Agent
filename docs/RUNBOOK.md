@@ -73,9 +73,10 @@ The manager persona is the one that can walk the whole mission: the plan
 acknowledgement, the gate advances and the managerial approval all require
 it. A buyer is refused at those steps, correctly.
 
-Dev tokens (`dev-{email}`, e.g. `dev-amara.buyer1@syn.example`) are a
-dev/test fallback for the connect form on Mission Control. They are
-unreachable once `OIDC_ISSUER` is configured.
+There is one credential: an email and a password. Signing in at `/login`
+exchanges them for a session token that is random, stored hashed,
+expiry-bound and revocable. The login page also offers the seeded personas
+as a one-click shortcut, which fills the demo password in for you.
 
 ## Local development (compose stack)
 

@@ -1,7 +1,8 @@
 // Typed API client for every 05 endpoint. Envelope unwrapped; request_id
-// surfaced on errors. Token comes from localStorage (demo) — production
-// uses the OIDC session cookie via the route handlers. A 401 clears the
-// token and routes to /login (F20).
+// surfaced on errors. The bearer token is the session minted by
+// /auth/login and read from localStorage; production uses the OIDC session
+// cookie via the route handlers. A 401 clears the token and routes to
+// /login (F20).
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api/v1";
 
 export type ScreenState =

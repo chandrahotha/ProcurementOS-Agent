@@ -1,101 +1,198 @@
-# ProcurementOS-Agent — Autonomous Procurement Agent
+# ProcurementOS-Agent
 
-Standalone procurement mission agent: intake → plan → evidence → analysis → scenarios → negotiation → approval → action → report — with its own deterministic engine and human approval gates for all material actions.
+An autonomous procurement mission agent. It takes a sourcing request from
+intake through plan, evidence, analysis, scenarios and negotiation, and stops
+at every gate that needs a human — award, money, contracts, external messages.
 
-Deterministic math is the source of truth; AI explains and drafts only. Awards, money, contracts, and external messages never move without explicit human approval. Every material number traces to an evidence span or a reasoned waiver.
+Deterministic math is the source of truth; AI explains and drafts, never
+decides. Every material number traces back to an evidence span or a reasoned
+waiver.
 
-## Where this stands
+```
+intake → plan → evidence → analysis → scenarios → negotiation → approval → action → report
+```
 
-The backend is built and tested end to end over HTTP (full mission walk W1→W8, auth matrix, idempotency, deny cases). The deterministic engine carries golden vectors. All four binding golden tests (AGENT-001…004) are real and green. Every screen is wired to the API, and the full W1→W8 walk passes as a Playwright suite against the sqlite-backed seeded stack. The Slice 15 design system is in: Tailwind 4 over the token contract, Inter + IBM Plex Mono, a persistent app shell (sidebar, topbar, command palette, theme toggle), real KPI dashboards, and all 40+ screens designed.
+## What it does
 
-**Completion pass (2026-10-20).** The findings ledger is at **160 fixed, 0 deferred, 0 open** — every item the 2026-09-25 audit had deferred is closed, each with a command that proves it. Every box in `docs/RELEASE_GATE.md` that said "pending staging" is now answerable with a command, because the thing it needed exists: per-environment env templates and a checker, a reversible migration chain proven on every push, a backup/restore cycle that verifies the restore, a rollback drill that measures itself, an egress policy with a live-host SSRF drill, and metrics with a task-age alert.
+- **Ingests quotes and contracts** from PDF, text and spreadsheets, extracts the
+  required fields, and quarantines anything carrying a prompt-injection payload
+  or a macro.
+- **Runs a deterministic engine** — sourcing comparison, supplier intelligence,
+  total cost of ownership with FX, risk scoring, and scenario optimisation.
+  Same input, same numbers, every time; golden vectors pin it.
+- **Runs the mission as a state machine.** A mission can only advance when its
+  gate's preconditions hold: evidence coverage above the threshold, no
+  unresolved conflicts, a brief that cites its lines, a negotiation draft inside
+  policy.
+- **Puts a human in the loop** where it matters. Awards, money, contracts and
+  outbound messages require an explicit approval from the right lane; the
+  award value is computed server-side from certified results, so a client
+  cannot talk the server into a cheaper winner.
+- **Keeps a hash-chained audit trail.** Every action is appended to a chain
+  that can be re-walked and verified end to end.
+- **Ships a web app** covering the whole mission, plus an HTTP API, an async
+  worker, and operational drills for backup, restore, rollback and egress.
 
-**Research context (ADR 0011).** The artefact is stated in postgraduate-thesis terms. The reporting currency is **INR**, the dual-control threshold is **INR 5,00,000**, the corpus is a synthetic Indian supply chain (six suppliers across Coimbatore, Pune, Raipur, Rajkot, Vadodara and Stuttgart, one of them invoiced in USD so the FX path is exercised against an RBI-quoted rate), and the synthetic records carry opaque identifiers rather than placeholder trade names. Every claim the repository makes about itself carries an evidence class — **E1** executed here, **E2** computable but not executed in this environment, **E3** proposed — and the evaluation design, its oracles, its measures and its threats to validity are in [`docs/EVALUATION.md`](docs/EVALUATION.md). The works cited are in [`docs/REFERENCES.md`](docs/REFERENCES.md).
+## Screens
 
-The defects the original audit did not reach are also fixed — including the AI result row that had never been written successfully, the credential-login path that had never run, a rate limiter that counted by address alone, the plan phase that could not execute its own tasks, and a client payload placeholder that made the action gate unreachable.
+| | |
+|---|---|
+| ![Mission Control](docs/screenshots/shot-P01.png) | ![Analysis](docs/screenshots/shot-P05.png) |
+| Mission Control | Analysis |
 
-Current check before every push: `ruff check` + `ruff format --check` clean, `mypy --strict` clean, `pytest` 162 passed + 5 skipped with **no warnings** (the skips are the Postgres leg the weekly job runs), `tsc` + `next build` green, `vitest` green, Playwright green. CI runs the fast gate chain on **every push and pull request** and the heavy legs (Postgres migration + seed + PG tests, container builds, Playwright) weekly and on demand. `pip-audit --strict` reports no known vulnerabilities in the locked Python set; the npm tree reports none in production and exactly one *reviewed* exception in the lint toolchain (`braces`, no patched release — see `scripts/npm_audit.py`); `requirements.lock` pins the resolved set.
+More in [`docs/screenshots/`](docs/screenshots). A guided walk through every
+screen is in [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md).
 
-**Verification pass (2026-10-21).** The whole fast gate chain was run against this tree on Windows. Three things were wrong, and they are recorded here rather than papered over.
+## Quick start
 
-- **The CI chain on `main` was red, and not because of the code.** The last three push runs (`5ac0867`, `e99a287`, `1bf0aa4`) all fail in the *first* job, `lint`, with **zero steps executed and no log written** — the signature of a job that never started, not of a lint error; the same command passes locally. The three weekly scheduled runs before that were green through `unit` and failed only at `integration`, the Postgres leg. **E1** for the local half, **E2** for the CI half: the run records show the shape of the failure but the logs were never produced, so the cause is not yet identified.
-- **Two gates would have failed on a clean CI install anyway, and both are fixed here.** `lxml` was missing from `requirements.lock`, and openpyxl serialises through lxml when it is importable and through the stdlib ElementTree when it is not — the two write different bytes for the same workbook, so `seed/make_fixtures.py --check` reported drift on the committed `price-history.xlsx`. And `vite@8.3.1` sits inside the vulnerable range of three `launch-editor` advisories, so `scripts/npm_audit.py` failed the dep-scan gate. `lxml` is now a declared dev dependency and pinned; vite is now `^8.3.5`.
-- **A `.gitattributes` now pins the line endings.** The repository had none, so a Windows checkout with `core.autocrlf=true` rewrote the corpus: a reportlab PDF contains no NUL byte, so git classified it as text and turned every LF into CRLF — the committed `quote-syn-sup-01.pdf` is 2409 bytes and the checked-out file was 2497. The drift check could never pass on a Windows clone. The binary fixtures are now marked `binary`, and everything else is checked out as LF.
-
-Still open, and said so rather than papered over: a real IdP has never been run against a live issuer; the Postgres-backed leg is written and collected but was not executed locally, because the PostgreSQL installation on this machine aborts its background workers; the operational drills have not been run against a deployed environment, because there is not one; and the audit chain's event order is reconstructed from `(created_at, id)` where `id` is a random UUID, so two events sharing a timestamp can verify out of order — this shows up as an intermittent `test_full_mission_walk` failure in the full suite and is not yet fixed (see `bugs/FINDINGS.md`).
-
-## Roadmap
-
-| # | Slice | Status | Evidence |
-|---|---|---|---|
-| 0 | Repo scaffold, compose stack, CI skeleton, producer docs | Done | `docs/BUILD_LOG.md` |
-| 1 | Foundation: `pos_*` models, RBAC, hash-chained audit | Done | `tests/test_foundation.py` |
-| 2 | Mission engine: state machine, plans, tasks, coverage gate | Done | `tests/test_phase9.py` |
-| 3 | Deterministic engine + golden vectors | Done | `engine/tests/test_vectors.py` |
-| 4 | Tool registry, approvals/quorum, dry-run + idempotent execute | Done | `tests/golden/test_agent_golden.py` (AGENT-001/002) |
-| 5 | Quarantine pipeline + injection isolation | Done | `tests/test_ingest.py` (AGENT-003) |
-| 6 | Ladders, AI fallback, hallucination scan, exports | Done | `tests/test_outage.py` (AGENT-004) |
-| 7 | Full HTTP API: all endpoints, advance, envelope-on-every-error | Done | `tests/test_api.py` |
-| 8 | Alembic `pos_001` + `pos_002`, round-trip verified | Done | `alembic/versions/` |
-| 9 | OIDC JWKS validation, dev fallback fenced | Done | `tests/test_oidc.py` |
-| 10 | Workers: enqueue, retry/backoff, poison quarantine | Done | `tests/test_workers.py` |
-| 11 | Web: typed client, P01/P06/P13/P14 wired, drawer, palette, smoke | Done | `web/e2e/smoke.spec.ts` |
-| 12 | Synthetic seed (7 users, 6 suppliers, 12 items, 24 txns) + fixtures | Done | `seed/seed_pos.py`, `seed/fixtures/` |
-| 13 | All screens wired to the API (P02–P16, G13, G16) | Done | `web/app/**`, `web/e2e/full-flow.spec.ts` |
-| 14 | Full W1–W8 Playwright walk on the seeded stack + CI e2e job | Done | `web/playwright.config.ts` (two-server boot) |
-| 15 | Styling pass: Tailwind 4 design system, app shell, all screens | Done | `web/app/globals.css`, `web/components/`, `bugs/02-frontend.md` |
-| 16 | Completion pass: every deferred finding closed, every release-gate box answerable with a command | Done | `docs/RELEASE_GATE.md`, `docs/BUILD_LOG.md`, `docs/adr/0006`–`0010` |
-| 17 | Research framing: INR corpus, evidence classes, evaluation design, component library, plan execution | Done | `docs/adr/0011`, `docs/EVALUATION.md`, `docs/REFERENCES.md` |
-| 18 | Staging deploy against a real IdP, restore and rollback rehearsal on the deployed environment, signed release + SBOM, empirical study on a labelled corpus | Next | `docs/RELEASE_GATE.md` § Still open |
-
-Rule of thumb: the build is done and verified — every screen is wired, the
-full mission walk passes end to end in CI, and the dependency tree audits
-clean. What remains is operations (a staging deploy with a real IdP and a
-rehearsal) and the empirical study. Open work is tracked as
-[GitHub issues](https://github.com/chandrahotha/ProcurementOS-Agent/issues).
-
-## Run it
+One command seeds the synthetic tenant, builds three demo missions through the
+real HTTP endpoints, starts the API and the web app, and prints the
+credentials:
 
 ```powershell
 python scripts/demo.py
 ```
 
-That seeds the synthetic tenant, builds three demo missions through the
-real HTTP endpoints, starts the API and the web app, and prints the
-credentials. The password for every seeded persona is `syn-Demo-2026!`;
-the personas and what each may do are in the runbook. A guided walk
-through the product — what each screen shows and why — is in
-[`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md).
-
 | | |
 |---|---|
 | Web app | http://localhost:3000 |
 | API | http://localhost:8000/api/v1 (OpenAPI at `/docs`) |
-| Screens | [`docs/screenshots/`](docs/screenshots) — captured with `npx --prefix web tsx web/scripts/screenshots.mts` |
+
+Requires Python 3.12+ and Node 20+. The demo uses SQLite and needs no other
+service. To run it by hand:
+
+```powershell
+pip install -r requirements.lock
+pip install -e ".[dev]"
+npm ci --prefix web
+python seed/seed_pos.py --tenant SYN-TENANT-01 --db-url "sqlite+aiosqlite:///./pos_dev.db"
+python seed/make_demo_mission.py --db-url "sqlite+aiosqlite:///./pos_dev.db"
+$env:DATABASE_URL = "sqlite+aiosqlite:///./pos_dev.db"
+python -m uvicorn app.main:app --port 8000
+npm run start --prefix web
+```
+
+### Signing in
+
+There is one credential: an email and a password. Signing in exchanges them for
+a session token that is random, stored hashed, expiry-bound and revocable.
+
+```
+daniel.manager@syn.example      ProcurementManager
+amara.buyer1@syn.example        Buyer
+fatima.finance@syn.example      FinanceReviewer
+chen.compliance@syn.example     ComplianceReviewer
+admin.seed@syn.example           Admin
+```
+
+Every seeded persona shares the demo password `syn-Demo-2026!`. It is
+synthetic, it authenticates nothing outside the local demo database, and the
+seed refuses to run against a non-synthetic database.
+
+In production, set `OIDC_ISSUER` and `OIDC_AUDIENCE` and the app authenticates
+through the identity provider instead. The app refuses to boot in production
+without them.
+
+## Stack
+
+| Layer | |
+|---|---|
+| API | FastAPI, SQLAlchemy 2 (async), Alembic |
+| Data | Postgres in production, SQLite locally |
+| Engine | pure Python — deterministic sourcing, cost, risk, scenarios |
+| Queue | Redis + RQ, with an in-process fallback when no broker is reachable |
+| Web | Next.js 16 (App Router), React 19, TypeScript, Tailwind 4 |
+| Storage | S3-compatible object storage |
+
+Money is always integer minor units. Timestamps are real columns.
 
 ## Repository layout
 
 ```text
-/app/          ← FastAPI: missions, plans, tasks, ingest, evidence, engine glue,
-│                 negotiation, approvals, actions, tools, ai, reports, audit, auth
-/engine/       ← deterministic math: sourcing, supplier, cost, risk, scenarios
-/worker/       ← RQ queue: task dispatch, retries, poison quarantine, in-process
-│                 plan execution for deployments with no broker
-/web/          ← Next.js 16 (App Router): P01–P16 + G screens, typed API client,
-│                 component library (data / intel / panels)
-/alembic/      ← migrations (pos_* schema, expand→migrate→contract)
-/seed/         ← synthetic data only (SYNTHETIC-*, refuses prod DBs) + the
-                 regenerable fixture corpus and the demo missions
-/scripts/      ← operational tools: demo, backup/restore, rollback drill,
-                 SSRF drill, task-age alert, env separation, lock, encoding
-/tests/        ← pytest incl. AGENT-001…004 golden suites
-/docs/         ← producer docs: build log, runbook, release gate, ADRs,
-                 evaluation protocol, references, walkthrough
-/prerequisite-docs/ ← product brain: vision, PRD, architecture, rules, UX, tests
+/app/        FastAPI: missions, plans, tasks, ingest, evidence, engine glue,
+             negotiation, approvals, actions, tools, AI, reports, audit, auth
+/engine/     the deterministic math: sourcing, supplier, cost, risk, scenarios
+/worker/     queue dispatch, retries, poison quarantine, in-process plan execution
+/web/        the Next.js app: mission screens and the component library
+/alembic/    migrations
+/seed/       synthetic data and the regenerable fixture corpus
+/scripts/    operational tools: demo, backup/restore, rollback, egress drill,
+             env checks, lockfile
+/tests/      the test suite, including the golden vector suites
+/docs/       runbook, API contract, ADRs, evaluation design, walkthrough
 ```
 
-- Start with [`prerequisite-docs/README.md`](prerequisite-docs/README.md) for the product index. The brain is the authoritative reference for every build step — do not edit it during implementation; record deviations as ADRs in `docs/adr/` (see `docs/README.md` for the current set).
-- How to run it locally: [`docs/RUNBOOK.md`](docs/RUNBOOK.md). One command for the whole product: `python scripts/demo.py`. The e2e walk: `npm run e2e --prefix web`.
-- Live endpoint inventory: [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md). Release status per box: [`docs/RELEASE_GATE.md`](docs/RELEASE_GATE.md).
-- The evaluation design, the evidence classes and the works cited: [`docs/EVALUATION.md`](docs/EVALUATION.md), [`docs/REFERENCES.md`](docs/REFERENCES.md).
-- This product is fully independent: own database, schema, config, and backlog. Zero dependency on any sibling product (see `docs/adr/0001-standalone-no-sibling-coupling.md`).
+## Security model
+
+- **Nothing material moves without a human.** Awarding, spending, contracting
+  and sending an external message all require an approval from the right
+  lane, and the quorum is checked server-side.
+- **The server computes the money.** Award values come from certified
+  analysis results, never from the client payload.
+- **Quarantine before extraction.** Uploads are scanned for injection payloads
+  and macros before anything is parsed; a flagged document never reaches a
+  planner.
+- **Tenant isolation is enforced in the query**, not in the UI.
+- **Outbound calls go through one egress policy** — scheme allowlist, host
+  allowlist, redirects not followed.
+- **The audit trail is hash-chained** and verifiable with a single request.
+- **AI output is untrusted** and is scanned for hallucinated evidence before
+  it can be shown as a brief.
+
+## Development
+
+```powershell
+ruff check app worker engine seed tests alembic scripts
+ruff format --check app worker engine seed tests alembic scripts
+mypy app worker engine seed scripts
+pytest -q -m "not integration"
+npm run lint --prefix web
+npm run typecheck --prefix web
+npm run build --prefix web
+npm run test --prefix web
+```
+
+The Postgres-backed tests need a running server and are marked `integration`:
+
+```powershell
+pytest -q -m integration
+```
+
+CI runs the fast gate chain on every push and pull request, and the heavy legs
+(Postgres, container builds, the end-to-end walk) weekly and on demand.
+
+## Configuration
+
+Everything is configured through the environment; see [`.env.example`](.env.example)
+for the full list and [`deploy/env/`](deploy/env) for per-environment templates.
+
+| Variable | |
+|---|---|
+| `DATABASE_URL` | async database URL (asyncpg / aiosqlite) |
+| `DATABASE_SYNC_URL` | sync URL Alembic uses (psycopg) |
+| `OIDC_ISSUER`, `OIDC_AUDIENCE` | the identity provider; required in production |
+| `REDIS_URL` | the queue; optional, tasks run in-process without it |
+| `S3_*`, `AWS_*` | object storage |
+| `AI_PRIMARY_*`, `AI_FALLBACK_*` | the AI provider and its fallback; empty means deterministic notes only |
+| `OUTBOX_WEBHOOK_URL` | where approved messages are delivered; empty means they stay queued |
+
+## Documentation
+
+| | |
+|---|---|
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | running it, operating it, the drills |
+| [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | the endpoint inventory |
+| [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md) | a guided pass over the product |
+| [`docs/EVALUATION.md`](docs/EVALUATION.md) | how the engine is evaluated |
+| [`docs/RELEASE_GATE.md`](docs/RELEASE_GATE.md) | the release checklist |
+| [`docs/adr/`](docs/adr) | the decisions behind the code |
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE).
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Security
+issues: see [SECURITY.md](SECURITY.md).
+
+All data in this repository is synthetic. It describes no real supplier, no
+real quote, and no real person.

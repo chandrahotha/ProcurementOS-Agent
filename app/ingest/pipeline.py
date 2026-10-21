@@ -77,6 +77,7 @@ def put_object(key: str, content: bytes) -> bool:
     returns False when credentials/bucket are unavailable (local dev)."""
     try:
         import boto3
+        from botocore.config import Config
 
         from app.core.config import settings
 
@@ -85,6 +86,15 @@ def put_object(key: str, content: bytes) -> bool:
             endpoint_url=settings.s3_endpoint,
             aws_access_key_id=settings.aws_access_key_id or None,
             aws_secret_access_key=settings.aws_secret_access_key or None,
+            # This store is best-effort: a missing object store must not
+            # hold the upload open. boto3's defaults are a 60-second read
+            # timeout and three retries, which turned every upload into a
+            # three-second stall whenever the store was not running.
+            config=Config(
+                connect_timeout=1,
+                read_timeout=5,
+                retries={"max_attempts": 0},
+            ),
         )
         client.put_object(Bucket=settings.s3_bucket, Key=key, Body=content)
         return True

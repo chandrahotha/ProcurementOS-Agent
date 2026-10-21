@@ -1,5 +1,9 @@
-"""Real auth over HTTP: login, me, logout (B-auth). Sessions are hashed at
-rest and expiry-bound; the dev-token fallback remains dev/test only."""
+"""Real auth over HTTP: login, me, logout (B-auth).
+
+An email and a password are the only way in. The session token is random,
+stored hashed, expiry-bound and revocable; the password is PBKDF2-SHA256
+with a per-user salt, and a wrong password is answered exactly like an
+unknown email, so the endpoint cannot be used to enumerate accounts."""
 
 from __future__ import annotations
 

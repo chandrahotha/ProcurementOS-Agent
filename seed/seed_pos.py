@@ -168,28 +168,23 @@ async def _seed(tenant_code: str, db_url: str) -> dict[str, int]:
             )
             u = uq.scalar_one_or_none()
             if u is None:
-                # B22: tokens are stored hashed — never plaintext, never
-                # compared in plaintext by the API. Passwords are PBKDF2
-                # (real credential login for the synthetic demo).
+                # Passwords are PBKDF2 (real credential login for the
+                # synthetic demo). There is no second credential: a user
+                # signs in with an email and a password, and the API
+                # accepts nothing else.
                 u = User(
                     tenant_id=tenant_id,
                     email=email,
                     name=name,
-                    api_token=hashlib.sha256(f"dev-{email}".encode()).hexdigest(),
                     password_hash=hash_password(SYN_DEMO_PASSWORD),
                 )
                 s.add(u)
                 await s.flush()
                 counts["users"] += 1
-            elif (
-                u.api_token != hashlib.sha256(f"dev-{email}".encode()).hexdigest()
-                or not u.password_hash
-            ):
-                # Repair older seed runs (idempotent): plaintext tokens get
-                # hashed; missing passwords get the synthetic demo password.
-                u.api_token = hashlib.sha256(f"dev-{email}".encode()).hexdigest()
-                if not u.password_hash:
-                    u.password_hash = hash_password(SYN_DEMO_PASSWORD)
+            elif not u.password_hash:
+                # Repair older seed runs (idempotent): a user without a
+                # password gets the synthetic demo password.
+                u.password_hash = hash_password(SYN_DEMO_PASSWORD)
             user_ids[email] = u.id
         # One demo workspace with everyone aboard; membership is what the
         # API checks and roles come from USERS so lanes work (T14: refreshed

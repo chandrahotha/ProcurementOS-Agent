@@ -16,7 +16,6 @@ is split into the phases it actually asserts.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from collections.abc import Iterator
 from typing import Any
 
@@ -24,6 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.auth.login import create_session, hash_password
 from app.db import get_session
 from app.main import app
 from app.models.base import Base
@@ -38,14 +38,32 @@ FINANCE = "fatima@x.io"
 COMPLIANCE = "chen@x.io"
 OUTSIDER = "other@x.io"
 
+#: The password every seeded persona shares. A test user signs in the way a
+#: person does — with an email and a password — because that is the only
+#: credential the API accepts.
+TEST_PASSWORD = "syn-Demo-2026!"
 
-def digest(token: str) -> str:
-    """Tokens are stored hashed (B22): the dev fallback matches the digest."""
-    return hashlib.sha256(token.encode()).hexdigest()
+#: The seeded personas' password hash, computed once. Hashing it per test
+#: would cost five PBKDF2 stretches on every single test; the salt being
+#: shared between synthetic test users is irrelevant, and the salt-per-user
+#: property is pinned by `test_each_hash_uses_a_fresh_salt`.
+TEST_PASSWORD_HASH = hash_password(TEST_PASSWORD)
+
+#: Session tokens minted by `create_session`, one per persona, populated by
+#: the `client` fixture. There is no developer token to fall back on.
+_SESSIONS: dict[str, str] = {}
 
 
 def auth(email: str, key: str | None = None) -> dict[str, str]:
-    hs = {"Authorization": f"Bearer tok-{email}"}
+    """The bearer header for a persona.
+
+    The token is a real session token — the same one `POST /auth/login`
+    would mint — issued when the `client` fixture seeded the tenant.
+    """
+    token = _SESSIONS.get(email)
+    if token is None:
+        raise AssertionError(f"no session for {email!r}: the client fixture did not run")
+    hs = {"Authorization": f"Bearer {token}"}
     if key:
         hs["Idempotency-Key"] = key
     return hs
@@ -65,7 +83,12 @@ async def _seed(engine: Any) -> tuple[dict[str, str], str]:
             ("Compliance", COMPLIANCE, ["ComplianceReviewer"]),
         ]
         for name, email, roles in crew:
-            u = User(tenant_id=TENANT, email=email, name=name, api_token=digest(f"tok-{email}"))
+            u = User(
+                tenant_id=TENANT,
+                email=email,
+                name=name,
+                password_hash=TEST_PASSWORD_HASH,
+            )
             s.add(u)
             await s.flush()
             users[email] = u.id
@@ -84,9 +107,20 @@ async def _seed(engine: Any) -> tuple[dict[str, str], str]:
             tenant_id="t-other",
             email=OUTSIDER,
             name="O",
-            api_token=digest(f"tok-{OUTSIDER}"),
+            password_hash=TEST_PASSWORD_HASH,
         )
         s.add(other)
+        await s.commit()
+        # A real session per persona, issued by the same function the login
+        # endpoint uses. The endpoint's own password-verification path is
+        # covered by `tests/test_auth_and_read_models.py`.
+        for email in (BUYER, MANAGER, FINANCE, COMPLIANCE, OUTSIDER):
+            _row, token = await create_session(
+                s,
+                tenant_id="t-other" if email == OUTSIDER else TENANT,
+                user_id=other.id if email == OUTSIDER else users[email],
+            )
+            _SESSIONS[email] = token
         await s.commit()
         return users, ws.id
 
@@ -112,6 +146,7 @@ def client() -> Iterator[TestClient]:
     try:
         yield TestClient(app, raise_server_exceptions=True)
     finally:
+        _SESSIONS.clear()
         app.dependency_overrides.pop(get_session, None)
         asyncio.run(engine.dispose())
 

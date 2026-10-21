@@ -1,5 +1,5 @@
 ﻿// G19 Security & Privacy (F42): session posture from real audit login data;
-// the dev-token fallback is dev/test only and unreachable with OIDC.
+// every session is minted from an email and a password and is revocable.
 "use client";
 
 import { useEffect, useState } from "react";
@@ -50,8 +50,9 @@ export default function SecurityPage() {
         </Card>
       ) : null}
       <p className="max-w-xl text-xs text-text-2">
-        Session review and revocation are enforced server-side; tokens are
-        stored hashed and the dev fallback is unreachable once OIDC is wired.
+        Session review and revocation are enforced server-side; session
+        tokens are stored hashed, expire, and are minted only from an email
+        and a password.
       </p>
     </Screen>
   );

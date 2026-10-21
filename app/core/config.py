@@ -38,15 +38,15 @@ class Settings(BaseSettings):
     outbox_webhook_url: str = ""
 
     def validate_auth(self) -> None:
-        """Fail hard at boot when production has no OIDC issuer/audience: the
-        dev-token fallback must be unreachable in prod (bugs B21). Also
-        refuses a silent half-config (issuer set, audience empty)."""
+        """Fail hard at boot when production has no OIDC issuer/audience: a
+        production deployment authenticates through the IdP. Also refuses a
+        silent half-config (issuer set, audience empty)."""
         if self.oidc_issuer and not self.oidc_audience:
             raise RuntimeError("OIDC_ISSUER is set but OIDC_AUDIENCE is empty")
         if self.app_env == "production" and not (self.oidc_issuer and self.oidc_audience):
             raise RuntimeError(
                 "production requires OIDC_ISSUER and OIDC_AUDIENCE; "
-                "the dev-token fallback is dev/test only"
+                "email-and-password sessions are for local and test use"
             )
 
 

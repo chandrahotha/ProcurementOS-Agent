@@ -1,8 +1,8 @@
 """Real credential login: PBKDF2-SHA256 password verification + session tokens.
 
-Tokens are random (secrets), hashed at rest, expiry-bound, revocable. The
-dev-token fallback stays as a dev/test convenience; OIDC remains the prod
-SSO path. Stdlib only — no new dependency.
+Tokens are random (secrets), hashed at rest, expiry-bound, revocable; passwords
+are salted and stretched. This is the way in — there is no other credential.
+OIDC remains the prod SSO path. Stdlib only — no new dependency.
 """
 
 from __future__ import annotations

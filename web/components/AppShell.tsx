@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon, type IconName } from "@/components/icons";
+import { api } from "@/lib/api-client";
 
 type NavItem = { label: string; href: string; icon: IconName };
 type NavGroup = { title: string; items: NavItem[] };
@@ -100,7 +101,13 @@ function UserChip() {
   const [email, setEmail] = useState("");
   useEffect(() => {
     const t = window.localStorage.getItem("pos_token") ?? "";
-    setEmail(t.startsWith("dev-") ? t.slice(4) : t ? "connected" : "");
+    if (!t) return;
+    // The session token is opaque, so the name comes from the API rather
+    // than from the token's own text.
+    void api
+      .me(t)
+      .then((me) => setEmail(me.email))
+      .catch(() => setEmail(""));
   }, []);
   return email ? (
     <span
@@ -113,11 +120,11 @@ function UserChip() {
     </span>
   ) : (
     <Link
-      href="/agent"
+      href="/login"
       className="hidden rounded-lg px-3 py-1.5 text-xs font-semibold text-white sm:inline-flex"
       style={{ background: "linear-gradient(135deg, var(--color-accent), var(--color-accent-2))" }}
     >
-      Connect
+      Sign in
     </Link>
   );
 }
