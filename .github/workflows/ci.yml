@@ -157,7 +157,7 @@ jobs:
           fetch-depth: 0
       # gitleaks stays on its tag: upstream documents tag usage with the
       # default token; pinned-SHA would need a separately managed ref.
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
