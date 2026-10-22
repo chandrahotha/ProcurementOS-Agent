@@ -12,7 +12,7 @@ description = "Standalone Autonomous Procurement Agent (deterministic engine + a
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.141,<0.142",
-  "starlette>=1.7,<1.8",
+  "starlette>=1.7,<1.10",
   "uvicorn[standard]>=0.30,<0.35",
   "pydantic>=2.7,<3",
   "pydantic-settings>=2.3,<3",
